@@ -1,0 +1,12 @@
+--- a/lib/x86/cpu_features.h
++++ b/lib/x86/cpu_features.h
+@@ -165,7 +165,8 @@
+ #  define HAVE_AVXVNNI(features)	((features) & X86_CPU_FEATURE_AVXVNNI)
+ #endif
+ 
+-#if (GCC_PREREQ(14, 0) || CLANG_PREREQ(18, 0, 18000000)) \
++/* LLVM 22 removed the separate evex512 target feature. */
++#if (GCC_PREREQ(14, 0) || (CLANG_PREREQ(18, 0, 18000000) && !CLANG_PREREQ(22, 0, 22000000))) \
+ 	&& !defined(__EVEX512__) /* avoid subtracting the evex512 feature */
+ #  define EVEX512	",evex512"	/* needed to override potential -mno-evex512 */
+ #  define NO_EVEX512	",no-evex512"

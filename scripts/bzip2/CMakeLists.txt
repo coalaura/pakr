@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(pakr_bzip2 C)
+add_library(bz2 STATIC ${SOURCE}/blocksort.c ${SOURCE}/huffman.c ${SOURCE}/crctable.c ${SOURCE}/randtable.c ${SOURCE}/compress.c ${SOURCE}/decompress.c ${SOURCE}/bzlib.c)
+target_include_directories(bz2 PUBLIC ${SOURCE})
+install(TARGETS bz2 ARCHIVE DESTINATION lib)
+install(FILES ${SOURCE}/bzlib.h DESTINATION include)
