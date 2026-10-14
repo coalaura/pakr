@@ -10,12 +10,38 @@ package native
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../.native/windows-amd64/lib
 #cgo windows,arm64 CPPFLAGS: -I${SRCDIR}/../../.native/windows-arm64/include
 #cgo windows,arm64 LDFLAGS: -L${SRCDIR}/../../.native/windows-arm64/lib
+
+// Link Darwin archives directly: Zig rebases -L paths beneath the macOS SDK sysroot.
 #cgo darwin,amd64 CPPFLAGS: -I${SRCDIR}/../../.native/darwin-amd64/include
-#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../.native/darwin-amd64/lib
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libpakr_parallel.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libarchive.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libzstd.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/liblzma.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbz2.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/liblz4.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbrotlienc.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbrotlidec.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbrotlicommon.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libdeflate.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libisal.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libz.a
 #cgo darwin,arm64 CPPFLAGS: -I${SRCDIR}/../../.native/darwin-arm64/include
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../.native/darwin-arm64/lib
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libpakr_parallel.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libarchive.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libzstd.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/liblzma.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbz2.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/liblz4.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbrotlienc.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbrotlidec.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbrotlicommon.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libdeflate.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libisal.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libz.a
+
 #cgo CPPFLAGS: -DLIBARCHIVE_STATIC
-#cgo LDFLAGS: -lpakr_parallel -larchive -lzstd -llzma -lbz2 -llz4 -lbrotlienc -lbrotlidec -lbrotlicommon -ldeflate -lisal -lz -lm -lstdc++
+#cgo linux windows LDFLAGS: -lpakr_parallel -larchive -lzstd -llzma -lbz2 -llz4 -lbrotlienc -lbrotlidec -lbrotlicommon -ldeflate -lisal -lz
+#cgo LDFLAGS: -lm -lstdc++
 #cgo linux LDFLAGS: -lpthread
 #cgo windows LDFLAGS: -lbcrypt
 #include "codec.h"
