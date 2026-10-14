@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/coalaura/pakr/internal/native"
+	"github.com/coalaura/plain/minimal"
 )
 
 type Options struct {
@@ -17,6 +18,7 @@ type Options struct {
 	Output   string
 	Threads  int
 	Level    int
+	Log      *minimal.Minimal
 	Progress io.Writer
 }
 
@@ -29,6 +31,11 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 	if output == "" {
 		output = "archive." + options.Format.Name
 	}
+
+	packPreview(options.Log, inputs, output)
+
+	progress := NewProgress(options.Log, options.Progress, "scan")
+	defer progress.Close()
 
 	var (
 		absolute string
@@ -60,12 +67,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		return fmt.Errorf("%s compresses one regular file; use tar.%s for files or directories", options.Format.Name, options.Format.Name)
 	}
 
-	var progress *Progress
-
-	if options.Progress != nil {
-		progress = NewProgress(options.Progress, total)
-		defer progress.Close()
-	}
+	progress.Phase("pack", total)
 
 	copying := &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}
 
@@ -92,6 +94,12 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		target = temporary
 	}
 
+	written := countingWriter{output: target}
+
+	if options.Log != nil {
+		target = &written
+	}
+
 	switch options.Format.Container {
 	case "7z":
 		err = temporary.Close()
@@ -108,30 +116,63 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		return err
 	}
 
-	if temporary == nil {
-		return nil
+	progress.Phase("finish", -1)
+
+	err = ctx.Err()
+	if err != nil {
+		return err
 	}
 
-	if options.Format.Container != "7z" {
-		err = temporary.Close()
+	size := written.bytes
+
+	if options.Format.Container == "7z" && options.Log != nil {
+		info, err := os.Stat(temporary.Name())
 		if err != nil {
 			return err
+		}
+
+		size = info.Size()
+	}
+
+	if temporary != nil {
+		if options.Format.Container != "7z" {
+			err = temporary.Close()
+			if err != nil {
+				return err
+			}
+		}
+
+		if output == "-" {
+			file, err := os.Open(temporary.Name())
+			if err != nil {
+				return err
+			}
+
+			defer file.Close()
+
+			// Publishing a seekable archive must not count the input data twice.
+			publishing := *copying
+			publishing.progress = nil
+
+			_, err = publishing.copy(stdout, file)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = publish(temporary.Name(), absolute)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
 	if output == "-" {
-		file, err := os.Open(temporary.Name())
-		if err != nil {
-			return err
-		}
-
-		defer file.Close()
-
-		_, err = io.CopyBuffer(stdout, file, copying.buffer)
-		return err
+		output = "stdout"
 	}
 
-	return publish(temporary.Name(), absolute)
+	progress.Complete("packed", output, size)
+
+	return nil
 }
 
 func packStream(target io.Writer, entries []entry, options Options, copying *copier) error {
@@ -162,6 +203,8 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 		err = copying.file(target, &entries[0])
 		copying.progress.File()
 	}
+
+	copying.progress.Phase("finish", -1)
 
 	if codec != nil {
 		return closeWithError(codec, err)
@@ -208,6 +251,8 @@ func packTar(target io.Writer, entries []entry, copying *copier) error {
 		copying.progress.File()
 	}
 
+	copying.progress.Phase("finish", -1)
+
 	return archive.Close()
 }
 
@@ -237,6 +282,8 @@ func pack7z(filename string, entries []entry, options Options, copying *copier) 
 
 		copying.progress.File()
 	}
+
+	copying.progress.Phase("finish", -1)
 
 	return archive.Close()
 }

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/coalaura/pakr/internal/pak"
 	"github.com/coalaura/plain/minimal"
@@ -18,17 +20,30 @@ import (
 var version = "dev"
 
 func main() {
-	logger := minimal.New(minimal.ToStdErr())
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	err := command().Run(ctx, os.Args)
+	err := run(ctx, command(), os.Args)
 	if err != nil {
-		logger.Errorf("%s", err)
-
 		os.Exit(1)
 	}
+}
+
+func run(ctx context.Context, application *cli.Command, arguments []string) error {
+	err := application.Run(ctx, arguments)
+	if err == nil || quietRequested(arguments) {
+		return err
+	}
+
+	log := minimal.New(minimal.WithTarget(application.ErrWriter), minimal.WithErrorTarget(application.ErrWriter))
+
+	if errors.Is(err, context.Canceled) {
+		_ = log.Warnln("cancelled")
+	} else {
+		_ = log.Errorln(strings.ReplaceAll(err.Error(), "\n", "; "))
+	}
+
+	return err
 }
 
 func command() *cli.Command {
@@ -37,20 +52,26 @@ func command() *cli.Command {
 		Usage:           "fast, uncomplicated packing and unpacking",
 		Version:         version,
 		HideHelpCommand: true,
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "hide status and errors"},
+		},
+		OnUsageError: usageError,
 		Commands: []*cli.Command{
 			{
-				Name:      "pack",
-				Usage:     "pack files or directories into an archive",
-				ArgsUsage: "<paths...>",
-				Flags:     flags(true),
-				Action:    packAction,
+				Name:         "pack",
+				Usage:        "pack files or directories into an archive",
+				ArgsUsage:    "<paths...>",
+				Flags:        flags(true),
+				Action:       packAction,
+				OnUsageError: usageError,
 			},
 			{
-				Name:      "unpack",
-				Usage:     "unpack an archive into a directory",
-				ArgsUsage: "<archive | ->",
-				Flags:     flags(false),
-				Action:    unpackAction,
+				Name:         "unpack",
+				Usage:        "unpack an archive into a directory",
+				ArgsUsage:    "<archive | ->",
+				Flags:        flags(false),
+				Action:       unpackAction,
+				OnUsageError: usageError,
 			},
 		},
 	}
@@ -69,7 +90,6 @@ func flags(packing bool) []cli.Flag {
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto or a positive integer"},
-		&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "hide progress"},
 	}
 
 	if packing {
@@ -158,11 +178,57 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 		}
 	}
 
-	if !command.Bool("quiet") && terminal(command.ErrWriter) {
-		options.Progress = command.ErrWriter
+	if !command.Bool("quiet") {
+		options.Log = minimal.New(minimal.WithTarget(command.ErrWriter), minimal.WithErrorTarget(command.ErrWriter))
+
+		if terminal(command.ErrWriter) {
+			options.Progress = command.ErrWriter
+		}
 	}
 
 	return options, nil
+}
+
+func usageError(_ context.Context, _ *cli.Command, err error, _ bool) error {
+	return err
+}
+
+func quietRequested(arguments []string) bool {
+	quiet := false
+
+	// Parsing may stop at an invalid flag before reaching --quiet.
+	for index := 1; index < len(arguments); index++ {
+		argument := arguments[index]
+		if argument == "--" {
+			break
+		}
+
+		if !strings.HasPrefix(argument, "-") {
+			continue
+		}
+
+		name, value, assigned := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+
+		switch name {
+		case "q", "quiet":
+			if !assigned {
+				quiet = true
+
+				continue
+			}
+
+			parsed, err := strconv.ParseBool(value)
+			if err == nil {
+				quiet = parsed
+			}
+		case "o", "output", "f", "format", "t", "threads", "l", "level", "p", "preset":
+			if !assigned {
+				index++
+			}
+		}
+	}
+
+	return quiet
 }
 
 func terminal(writer io.Writer) bool {

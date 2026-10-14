@@ -83,6 +83,8 @@ func packZip(target io.Writer, entries []entry, options Options, copying *copier
 		}
 	}
 
+	copying.progress.Phase("finish", -1)
+
 	return archive.Close()
 }
 
@@ -150,7 +152,9 @@ func prepareZip(item *entry, level int, copying *copier) zipResult {
 	header.CompressedSize64 = uint64(len(compressed))
 	header.CRC32 = crc32.ChecksumIEEE(data)
 
-	copying.progress.Add(len(data))
+	if item.header.Kind == native.Regular {
+		copying.progress.Add(len(data))
+	}
 
 	return zipResult{header: header, compressed: compressed}
 }

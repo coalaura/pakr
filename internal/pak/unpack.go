@@ -17,6 +17,16 @@ import (
 func Unpack(ctx context.Context, input string, options Options, stdin io.Reader) error {
 	inputName := input
 
+	output := options.Output
+	if output == "" {
+		output = "."
+	}
+
+	unpackPreview(options.Log, input, output)
+
+	progress := NewProgress(options.Log, options.Progress, "read")
+	defer progress.Close()
+
 	if input == "-" {
 		temporary, err := os.CreateTemp("", "pakr-input-*")
 		if err != nil {
@@ -63,11 +73,6 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 		}
 	}
 
-	output := options.Output
-	if output == "" {
-		output = "."
-	}
-
 	err = os.MkdirAll(output, 0o755)
 	if err != nil {
 		return err
@@ -80,12 +85,7 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 
 	defer root.Close()
 
-	var progress *Progress
-
-	if options.Progress != nil {
-		progress = NewProgress(options.Progress, 0)
-		defer progress.Close()
-	}
+	progress.Phase("unpack", 0)
 
 	extract := extractor{root: root, copying: &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}}
 
@@ -102,7 +102,20 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 		return err
 	}
 
-	return extract.finish()
+	progress.Phase("finish", -1)
+
+	err = ctx.Err()
+	if err == nil {
+		err = extract.finish()
+	}
+
+	if err != nil {
+		return err
+	}
+
+	progress.Complete("unpacked", output, -1)
+
+	return nil
 }
 
 func unpackStream(file *os.File, input string, options Options, extract *extractor) error {
@@ -133,7 +146,12 @@ func unpackStream(file *os.File, input string, options Options, extract *extract
 		err = unpackTar(source, extract)
 		if err == nil {
 			// Tar's end marker precedes the codec footer; drain to validate its checksum.
-			_, err = extract.copying.copy(io.Discard, source)
+			extract.copying.progress.Phase("finish", -1)
+
+			draining := *extract.copying
+			draining.progress = nil
+
+			_, err = draining.copy(io.Discard, source)
 		}
 
 		return err
@@ -244,7 +262,7 @@ func detectFormat(file *os.File) (Format, error) {
 	case count >= 262 && string(data[257:262]) == "ustar":
 		name = "tar"
 	default:
-		return Format{}, errors.New("unrecognized archive; specify --format (required for Brotli and extensionless compressed tar)")
+		return Format{}, errors.New("unrecognized archive; specify --format (required for brotli and extensionless compressed tar)")
 	}
 
 	return ParseFormat(name)

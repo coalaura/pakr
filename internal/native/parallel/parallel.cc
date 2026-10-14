@@ -1,5 +1,6 @@
 #include "parallel.h"
 #include <cstdio>
+#include <iostream>
 #include <memory>
 #include <fcntl.h>
 #include <filereader/Standard.hpp>
@@ -9,6 +10,17 @@
 #include <windows.h>
 #include <io.h>
 #endif
+
+namespace {
+struct SilentDiagnostics {
+	SilentDiagnostics() {
+		// Errors return through the bridge; duplicate C++ diagnostics bypass --quiet and progress cleanup.
+		std::cerr.setstate(std::ios_base::failbit);
+	}
+};
+
+const SilentDiagnostics silentDiagnostics;
+}
 
 extern "C" void *pakr_parallel_open(const char *path, int format, int threads, char *error, size_t capacity) {
 	try {

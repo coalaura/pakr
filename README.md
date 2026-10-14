@@ -25,9 +25,11 @@ pakr --version
 | `-t`, `--threads` | `auto` (default) or a worker budget from 1 to 256 |
 | `-l`, `--level` | Pack: compression effort from 1 to 9; default 3 |
 | `-p`, `--preset` | Pack: `fast` = 1, `balanced` = 3, `best` = 9; exclusive with `--level` |
-| `-q`, `--quiet` | Hide progress |
+| `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 
-Flags may follow input paths. Progress is written to stderr when it is a terminal; piped archive bytes on stdout remain clean. Packing displays a byte-based progress bar. Extraction displays bytes, throughput and file count without inventing a total for streams whose expanded size is unknown.
+Flags may follow input paths. Status is written to stderr, including when redirected; piped archive bytes on stdout remain clean. Packing previews up to three supplied input paths and the destination, with a count of additional inputs. Unpacking shows the archive and destination. Long preview paths are shortened; summaries retain the full destination and paths preserve their case.
+
+Terminals also show live progress with a short phase label: `scan`, `read`, `pack`, `unpack` or `finish`. Packing displays a byte-based progress bar. Extraction displays bytes, throughput and entry count without inventing a total for streams whose expanded size is unknown. On success, the live line is replaced by a summary of entries, data size, elapsed time and destination; packing includes the archive size and compression ratio. The percentage beside the before and after sizes is archive bytes as a percentage of original file bytes, for example `842.0 mib -> 219.0 mib (26.0%)`; values above `100.0%` indicate expansion and empty inputs show `(n/a)`. Entries include directories and links, while data size counts regular file contents. On failure or interruption, the live line is cleared before a short error or `cancelled` message. Generated labels and units are lowercase and ASCII.
 
 ## Formats and backends
 
