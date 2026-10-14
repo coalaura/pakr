@@ -34,19 +34,19 @@ jobs:
 
       - name: Build native libraries
         env:
-          TARGET_OS: ${{ matrix.os }}
-          TARGET_ARCH: ${{ matrix.arch }}
+          PAKR_TARGET_OS: ${{ matrix.os }}
+          PAKR_TARGET_ARCH: ${{ matrix.arch }}
           BUILD_IMAGE: coalaura/builder:latest${{ matrix.os == 'darwin' && '-macos' || '' }}
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --workdir "$GITHUB_WORKSPACE" \
-            --env TARGET_OS --env TARGET_ARCH --env JOBS=2 \
+            --env PAKR_TARGET_OS --env PAKR_TARGET_ARCH --env JOBS=2 \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint sh "$BUILD_IMAGE" -ec '
               apk add --no-cache build-base cmake coreutils curl patch tar xz
-              bash scripts/native.sh "$TARGET_OS" "$TARGET_ARCH"
-              if [ "$TARGET_OS/$TARGET_ARCH" = linux/amd64 ]; then
+              bash scripts/native.sh "$PAKR_TARGET_OS" "$PAKR_TARGET_ARCH"
+              if [ "$PAKR_TARGET_OS/$PAKR_TARGET_ARCH" = linux/amd64 ]; then
                 bash scripts/build.sh linux amd64 test
               fi
               chown -R "$HOST_UID:$HOST_GID" .native
