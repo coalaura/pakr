@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" fill="none" role="img" aria-labelledby="title description">
+	<title id="title">pakr — pack and unpack archives</title>
+	<desc id="description">A fan of loose files gathers into a neat stack bearing the name pakr. One orange band holds it all together, with opposing arrows for packing and unpacking.</desc>
+	<style>
+		.sheet-back { fill: #29454e; stroke: #78969b; }
+		.sheet-back-lines { stroke: #58767d; }
+		.sheet-middle { fill: #c2ad82; stroke: #263b40; }
+		.sheet-fold { fill: #ead8b3; stroke: #263b40; }
+		.sheet-middle-lines { stroke: #94815d; }
+		.band-tail { fill: #ee764b; }
+		.band-shadow { fill: #af4930; }
+		.stack-edge { fill: #c8cabe; stroke: #34484c; }
+		.stack-line { stroke: #75817b; }
+		.cover { fill: #f1ecdf; stroke: #34484c; }
+		.cover-fold { fill: #d5d6c8; stroke: #34484c; }
+		.wordmark { fill: #20363b; }
+		.band-top { fill: #ffad79; }
+		.band-front { fill: #ff8b5b; }
+		.arrows { fill: #482b22; }
+		.caption { fill: #b3c2c6; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 24px; }
+	</style>
+
+	<!-- Loose sheets fan out from the single binding point. -->
+	<g stroke-width="2" stroke-linejoin="round">
+		<path class="sheet-back" d="M142 116 788 62 805 243 158 297Z"/>
+		<path class="sheet-back-lines" stroke-width="3" d="m174 214 117-10m-115 27 94-8m-92 25 116-10m-114 27 64-5"/>
+		<path class="sheet-middle" d="M164 29 824 92 809 246 120 181 128 65Z"/>
+		<path class="sheet-fold" d="m128 65 32 3 4-39Z"/>
+		<path class="sheet-middle-lines" stroke-width="3" d="m198 54 224 21m-226-9 144 14M158 99l94 9m-96 8 108 10m-110 7 72 7m-74 10 44 4"/>
+	</g>
+
+	<!-- The free end belongs to the same band that wraps the stack. -->
+	<path class="band-tail" d="M800 223c61 10 114-2 163-27l26 49c-48 25-107 39-164 33l-42-19Z"/>
+	<path class="band-shadow" d="m783 259 42 19c23 2 47 1 70-3-37 0-63-16-75-33Z"/>
+
+	<g stroke-width="2" stroke-linejoin="round">
+		<path class="stack-edge" d="M224 237h650v14l-14 22H211v-14Z"/>
+		<path class="stack-line" d="M219 257h650m-654 8h649"/>
+		<path class="cover" d="M248 80h626v169H224V104Z"/>
+		<path class="cover-fold" d="M248 80v24h-24Z"/>
+	</g>
+
+	<!-- Custom lowercase letterforms keep the name independent of installed fonts. -->
+	<g class="wordmark" transform="translate(285 92) scale(0.9)" fill-rule="evenodd" aria-label="pakr">
+		<path d="M0 34h28v9c9-9 18-13 32-13 32 0 53 23 53 57s-21 57-53 57c-14 0-24-5-32-13v33H0Zm28 53c0 20 10 31 28 31 17 0 28-12 28-31S73 56 56 56C38 56 28 67 28 87Z"/>
+		<path d="M205 34h28v108h-28v-11c-9 9-20 13-33 13-29 0-50-22-50-57s21-57 51-57c14 0 24 5 32 14Zm-54 53c0 19 10 31 27 31 18 0 28-12 28-31s-10-31-28-31c-17 0-27 12-27 31Z"/>
+		<path d="M254 0h28v79l36-45h35l-44 52 48 56h-37l-38-46v46h-28Z"/>
+		<path d="M373 34h28v18c9-16 20-22 40-21v29h-9c-21 0-31 13-31 37v45h-28Z"/>
+	</g>
+
+	<g>
+		<path class="band-top" d="M755 67h84l10 13H745Z"/>
+		<path class="band-front" d="M745 80h104v169H745Z"/>
+		<path class="band-shadow" d="M745 249h104l-14 24H731Z"/>
+		<g class="arrows">
+			<path d="M765 141h53l-12-12 4-4 19 19-19 19-4-4 12-12h-53Z"/>
+			<path d="M829 182h-53l12-12-4-4-19 19 19 19 4-4-12-12h53Z"/>
+		</g>
+	</g>
+
+	<text class="caption" x="560" y="324" text-anchor="middle">Pack and unpack archives.</text>
+</svg>
