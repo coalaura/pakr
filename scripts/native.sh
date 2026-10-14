@@ -18,7 +18,7 @@ bash "$root/scripts/fetch.sh"
 
 signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/bzip2/CMakeLists.txt" "$root/scripts/patches/"*.patch "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
 signature=$(printf '%s' "$signature" | sha256sum | cut -d ' ' -f 1)
-(cd "$root/tools/toolchain" && go run . "$target" "$arch" "$toolchain")
+(cd "$root/tools/toolchain" && go run -buildvcs=false . "$target" "$arch" "$toolchain")
 
 build_cmake() {
 	local name=$1 source=$2

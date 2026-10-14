@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/coalaura/builder/goenv"
@@ -60,5 +62,40 @@ func generate() error {
 
 	content.WriteString("set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\nset(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)\nset(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)\nset(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)\n")
 
-	return os.WriteFile(filepath.Join(directory, "toolchain.cmake"), []byte(content.String()), 0o644)
+	err = os.WriteFile(filepath.Join(directory, "toolchain.cmake"), []byte(content.String()), 0o644)
+	if err != nil {
+		return err
+	}
+
+	return writeEnvironment(directory, config)
+}
+
+func writeEnvironment(directory string, config goenv.Config) error {
+	var content strings.Builder
+
+	names := slices.Sorted(maps.Keys(config.Env))
+
+	for _, name := range names {
+		value := config.Env[name]
+		if value == "" {
+			fmt.Fprintf(&content, "unset %s\n", name)
+		} else {
+			fmt.Fprintf(&content, "export %s=%s\n", name, shellQuote(value))
+		}
+	}
+
+	content.WriteString("GO_BUILD_FLAGS=(")
+
+	for _, flag := range config.BuildFlags {
+		fmt.Fprintf(&content, "%s ", shellQuote(flag))
+	}
+
+	content.WriteString(")\n")
+	fmt.Fprintf(&content, "GO_LDFLAGS=%s\n", shellQuote(config.LDFlags))
+
+	return os.WriteFile(filepath.Join(directory, "env.sh"), []byte(content.String()), 0o644)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
