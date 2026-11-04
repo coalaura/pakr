@@ -59,11 +59,14 @@ Flags may follow input paths.
 | --- | --- |
 | `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory when unpacking |
 | `-f`, `--format` | Explicit format or alias |
-| `-t`, `--threads` | Worker budget: `auto` (default) or 1-256 |
+| `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
 | `-l`, `--level` | Compression effort: 1-9, default 3; packing only |
 | `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
+| `--max` | Maximum effort: `--threads all --level 9`; explicit `--threads`, `--level` or `--preset` settings override regardless of argument order; packing only |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `-v`, `--version` | Print the version |
+
+`--threads auto` follows Go's concurrency setting (`GOMAXPROCS`), while `--threads all` uses all logical CPUs visible to the process. Both are capped at 256 workers.
 
 ## Formats
 

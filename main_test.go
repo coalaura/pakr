@@ -10,9 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 )
+
+type commandOptionsCase struct {
+	name      string
+	arguments []string
+	threads   int
+	level     int
+}
 
 type commandFailureCase struct {
 	name      string
@@ -98,15 +108,96 @@ func TestCommandPipeline(t *testing.T) {
 	}
 }
 
+func TestCommandOptions(t *testing.T) {
+	autoThreads := 1
+	if runtime.NumCPU() == autoThreads {
+		autoThreads = 2
+	}
+
+	previous := runtime.GOMAXPROCS(autoThreads)
+	defer runtime.GOMAXPROCS(previous)
+
+	allThreads := min(runtime.NumCPU(), 256)
+
+	cases := []commandOptionsCase{
+		{name: "pack-default", arguments: []string{"pack"}, threads: autoThreads, level: 3},
+		{name: "unpack-default", arguments: []string{"unpack"}, threads: autoThreads, level: 3},
+		{name: "pack-all", arguments: []string{"pack", "--threads", "all"}, threads: allThreads, level: 3},
+		{name: "unpack-all", arguments: []string{"unpack", "-t", "all"}, threads: allThreads, level: 3},
+		{name: "max", arguments: []string{"pack", "--max"}, threads: allThreads, level: 9},
+		{name: "max-disabled", arguments: []string{"pack", "--max=false"}, threads: autoThreads, level: 3},
+		{name: "max-threads-after", arguments: []string{"pack", "--max", "--threads", "4"}, threads: 4, level: 9},
+		{name: "max-threads-before", arguments: []string{"pack", "-t", "4", "--max"}, threads: 4, level: 9},
+		{name: "max-auto-after", arguments: []string{"pack", "--max", "--threads", "auto"}, threads: autoThreads, level: 9},
+		{name: "max-auto-before", arguments: []string{"pack", "-t", "auto", "--max"}, threads: autoThreads, level: 9},
+		{name: "max-level-after", arguments: []string{"pack", "--max", "--level", "5"}, threads: allThreads, level: 5},
+		{name: "max-level-before", arguments: []string{"pack", "-l", "5", "--max"}, threads: allThreads, level: 5},
+		{name: "max-default-level-after", arguments: []string{"pack", "--max", "--level", "3"}, threads: allThreads, level: 3},
+		{name: "max-default-level-before", arguments: []string{"pack", "-l", "3", "--max"}, threads: allThreads, level: 3},
+		{name: "max-fast-after", arguments: []string{"pack", "--max", "--preset", "fast"}, threads: allThreads, level: 1},
+		{name: "max-fast-before", arguments: []string{"pack", "-p", "fast", "--max"}, threads: allThreads, level: 1},
+		{name: "max-balanced-after", arguments: []string{"pack", "--max", "--preset", "balanced"}, threads: allThreads, level: 3},
+		{name: "max-balanced-before", arguments: []string{"pack", "-p", "balanced", "--max"}, threads: allThreads, level: 3},
+		{name: "max-best", arguments: []string{"pack", "--max", "--preset", "best"}, threads: allThreads, level: 9},
+		{name: "max-combined", arguments: []string{"pack", "-t", "4", "--max", "-l", "3"}, threads: 4, level: 3},
+	}
+
+	for _, scenario := range cases {
+		t.Run(scenario.name, func(t *testing.T) {
+			application := command()
+			application.Writer = io.Discard
+			application.ErrWriter = io.Discard
+
+			called := false
+
+			for _, subcommand := range application.Commands {
+				subcommand.Action = func(_ context.Context, parsed *cli.Command) error {
+					called = true
+
+					options, err := optionsFor(parsed, parsed.Name == "pack")
+					if err != nil {
+						return err
+					}
+
+					if options.Threads != scenario.threads || options.Level != scenario.level {
+						t.Fatalf("got threads=%d level=%d, want threads=%d level=%d", options.Threads, options.Level, scenario.threads, scenario.level)
+					}
+
+					return nil
+				}
+			}
+
+			arguments := append([]string{"pakr"}, scenario.arguments...)
+
+			err := application.Run(context.Background(), arguments)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !called {
+				t.Fatal("command action was not called")
+			}
+		})
+	}
+}
+
 func TestInvalidOptions(t *testing.T) {
 	cases := [][]string{
 		{"--threads", "0"},
 		{"--threads", "257"},
+		{"--threads", "unknown"},
 		{"--level", "0"},
 		{"--level", "10"},
 		{"--preset", "unknown"},
 		{"--preset", "fast", "--level", "1"},
 		{"--format", "unknown"},
+		{"--max", "--threads", "0"},
+		{"--max", "--threads", "257"},
+		{"--max", "--threads", "unknown"},
+		{"--max", "--level", "0"},
+		{"--max", "--level", "10"},
+		{"--max", "--preset", "unknown"},
+		{"--max", "--preset", "fast", "--level", "1"},
 	}
 
 	for _, arguments := range cases {
@@ -120,6 +211,17 @@ func TestInvalidOptions(t *testing.T) {
 				t.Fatalf("expected option validation before opening inputs, got %v", err)
 			}
 		})
+	}
+}
+
+func TestUnpackRejectsMax(t *testing.T) {
+	application := command()
+	application.Writer = io.Discard
+	application.ErrWriter = io.Discard
+
+	err := application.Run(context.Background(), []string{"pakr", "unpack", "unused", "--max"})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -max") {
+		t.Fatalf("expected unknown max flag, got %v", err)
 	}
 }
 

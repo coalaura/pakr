@@ -106,6 +106,7 @@ func (writer *Writer) Write(data []byte) (int, error) {
 
 		if err != nil {
 			writer.err = err
+
 			return written, err
 		}
 

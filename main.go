@@ -89,12 +89,13 @@ func flags(packing bool) []cli.Flag {
 	result := []cli.Flag{
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage},
-		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto or a positive integer"},
+		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
 	}
 
 	if packing {
 		result = append(result, &cli.IntFlag{Name: "level", Aliases: []string{"l"}, Value: 3, Usage: "compression effort from 1 (fastest) to 9 (smallest)"})
 		result = append(result, &cli.StringFlag{Name: "preset", Aliases: []string{"p"}, Usage: "fast, balanced, or best (alternative to --level)"})
+		result = append(result, &cli.BoolFlag{Name: "max", Usage: "maximum effort: --threads all and --level 9; explicit settings override"})
 	}
 
 	return result
@@ -124,12 +125,22 @@ func unpackAction(ctx context.Context, command *cli.Command) error {
 
 func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 	options := pak.Options{Output: command.String("output"), Level: 3, Threads: runtime.GOMAXPROCS(0)}
+	maximum := packing && command.Bool("max")
 
 	threads := command.String("threads")
-	if threads != "auto" {
+
+	if maximum && !command.IsSet("threads") {
+		threads = "all"
+	}
+
+	switch threads {
+	case "auto":
+	case "all":
+		options.Threads = runtime.NumCPU()
+	default:
 		count, err := strconv.Atoi(threads)
 		if err != nil || count < 1 || count > 256 {
-			return options, fmt.Errorf("--threads must be auto or an integer from 1 to 256")
+			return options, fmt.Errorf("--threads must be auto, all, or an integer from 1 to 256")
 		}
 
 		options.Threads = count
@@ -161,6 +172,10 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 		preset := command.String("preset")
 		if preset != "" && command.IsSet("level") {
 			return options, fmt.Errorf("choose --level or --preset, not both")
+		}
+
+		if maximum && !command.IsSet("level") && preset == "" {
+			options.Level = 9
 		}
 
 		switch preset {
