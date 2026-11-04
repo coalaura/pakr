@@ -53,8 +53,10 @@ func command() *cli.Command {
 		Version:         version,
 		HideHelpCommand: true,
 		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "formats", Usage: "compare formats, speeds and size savings"},
 			&cli.BoolFlag{Name: "quiet", Aliases: []string{"q"}, Usage: "hide status and errors"},
 		},
+		Action:       appAction,
 		OnUsageError: usageError,
 		Commands: []*cli.Command{
 			{
@@ -88,7 +90,7 @@ func flags(packing bool) []cli.Flag {
 
 	result := []cli.Flag{
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
-		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage},
+		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
 	}
 
@@ -101,7 +103,23 @@ func flags(packing bool) []cli.Flag {
 	return result
 }
 
+func appAction(ctx context.Context, command *cli.Command) error {
+	if command.Bool("formats") {
+		return showFormats(command.Writer)
+	}
+
+	if command.NArg() != 0 {
+		return cli.ShowCommandHelp(ctx, command, command.Args().First())
+	}
+
+	return cli.ShowRootCommandHelp(command)
+}
+
 func packAction(ctx context.Context, command *cli.Command) error {
+	if command.Bool("formats") {
+		return showFormats(command.Writer)
+	}
+
 	options, err := optionsFor(command, true)
 	if err != nil {
 		return err
@@ -111,6 +129,10 @@ func packAction(ctx context.Context, command *cli.Command) error {
 }
 
 func unpackAction(ctx context.Context, command *cli.Command) error {
+	if command.Bool("formats") {
+		return showFormats(command.Writer)
+	}
+
 	if command.NArg() != 1 {
 		return fmt.Errorf("provide exactly one archive to unpack")
 	}

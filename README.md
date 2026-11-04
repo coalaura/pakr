@@ -64,6 +64,7 @@ Flags may follow input paths.
 | `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
 | `--max` | Maximum effort: `--threads all --level 9`; explicit `--threads`, `--level` or `--preset` settings override regardless of argument order; packing only |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
+| `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
 
 `--threads auto` follows Go's concurrency setting (`GOMAXPROCS`), while `--threads all` uses all logical CPUs visible to the process. Both are capped at 256 workers.
