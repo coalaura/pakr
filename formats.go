@@ -15,15 +15,16 @@ xz      Slow       Moderate   Very high
 7z      Slow       Moderate   Very high
 br      Fast       Fast       High
 
-Default: tar.zst. Fastest compression: tar.lz4. Broad desktop compatibility: zip.
+Choosing a format
+  - Default: tar.zst
+  - Fastest compression: tar.lz4
+  - Broad desktop compatibility: zip
+  - Raw codecs take one file; use tar.<codec> for multiple files or folders.
 
-Raw codecs take one file; use tar.<codec> for multiple files or folders.
-
-Speeds assume level 3; higher levels can be much slower. Ratings are qualitative and vary with input, threads and hardware.
-Level 9 reaches each backend's standard maximum; --max also enables XZ extreme within resource budgets.
-Use --seekable with zst or tar.zst for independent frames and parallel file extraction.
-BZIP3 aliases: bzip3, tar.bz3, tbz3. Levels 1-9 use 1, 4, 16, 32, 64, 128, 256, 384, 511 MiB blocks.
-BZIP3 uses --memory (default 2GiB); raise it for high levels, including --max. Inputs <=65KiB declare 65KiB blocks.
+Compression settings
+  - Ratings assume level 3 and vary with input, threads and hardware. Higher levels can be much slower.
+  - Level 9 selects each backend's standard maximum; --max also enables XZ extreme within resource budgets.
+  - --seekable enables independent frames and parallel file extraction for zst and tar.zst.
 `
 
 func showFormats(writer io.Writer) error {
