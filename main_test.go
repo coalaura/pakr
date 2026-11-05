@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coalaura/pakr/internal/pak"
 	"github.com/urfave/cli/v3"
 )
 
@@ -35,6 +36,57 @@ type quietArgumentCase struct {
 	name      string
 	arguments []string
 	quiet     bool
+}
+
+func TestExtractionLimitOptions(t *testing.T) {
+	arguments := [][]string{
+		{},
+		{"--max-output", "2TiB", "--max-file-size", "4GiB", "--max-entries", "42"},
+		{"--max-output", "0", "--max-file-size", "0", "--max-entries", "0"},
+	}
+
+	expected := []pak.ExtractionLimits{
+		{MaxOutput: pak.DefaultMaxOutput, MaxFileSize: pak.DefaultMaxFileSize, MaxEntries: pak.DefaultMaxEntries},
+		{MaxOutput: 2 << 40, MaxFileSize: 4 << 30, MaxEntries: 42},
+		{},
+	}
+
+	for index, flags := range arguments {
+		application := command()
+
+		for _, subcommand := range application.Commands {
+			if subcommand.Name != "unpack" {
+				continue
+			}
+
+			subcommand.Action = func(_ context.Context, parsed *cli.Command) error {
+				options, err := optionsFor(parsed, false)
+				if err != nil {
+					return err
+				}
+
+				if options.Limits == nil || *options.Limits != expected[index] {
+					t.Fatalf("limits: %+v", options.Limits)
+				}
+
+				return nil
+			}
+		}
+
+		err := application.Run(context.Background(), append([]string{"pakr", "unpack"}, flags...))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	invalid := []string{"-1", "1.5GiB", "1GB", "18446744073709551616", "16777216TiB", "KiB"}
+
+	for _, input := range invalid {
+		_, err := parseSize(input)
+		if err == nil {
+			t.Fatalf("accepted invalid size %q", input)
+		}
+	}
 }
 
 func TestVersion(t *testing.T) {

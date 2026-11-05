@@ -13,9 +13,13 @@ void pakr_hash_update(void *state, const void *data, size_t size) { XXH64_update
 uint32_t pakr_hash_digest(void *state) { return (uint32_t)XXH64_digest(state); }
 void pakr_hash_free(void *state) { XXH64_freeState(state); }
 
-int pakr_zstd_frame(const void *input, size_t size, void *output, size_t capacity) {
+void *pakr_zstd_decoder_new(void) { return ZSTD_createDCtx(); }
+void pakr_zstd_decoder_free(void *decoder) { ZSTD_freeDCtx(decoder); }
+
+int pakr_zstd_frame(void *decoder, const void *input, size_t size, void *output, size_t capacity) {
+	if (!decoder) return -1;
 	size_t compressed = ZSTD_findFrameCompressedSize(input, size);
 	if (ZSTD_isError(compressed) || compressed != size) return -1;
-	size_t decoded = ZSTD_decompress(output, capacity, input, size);
+	size_t decoded = ZSTD_decompressDCtx(decoder, output, capacity, input, size);
 	return !ZSTD_isError(decoded) && decoded == capacity ? 0 : -1;
 }

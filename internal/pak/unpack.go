@@ -16,6 +16,10 @@ import (
 )
 
 func Unpack(ctx context.Context, input string, options Options, stdin io.Reader) error {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	budget := newExtractionBudget(ctx, options.Limits, cancel)
 	inputName := input
 
 	var (
@@ -118,7 +122,7 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 
 	progress.Phase("unpack", 0)
 
-	extract := extractor{root: root, copying: &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}}
+	extract := extractor{root: root, budget: budget, copying: &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}}
 
 	switch options.Format.Container {
 	case "zip":
@@ -130,7 +134,7 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	}
 
 	if err != nil {
-		return err
+		return errors.Join(err, context.Cause(ctx))
 	}
 
 	progress.Phase("finish", -1)

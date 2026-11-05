@@ -13,6 +13,54 @@ type levelCase struct {
 	values  [9]int
 }
 
+func TestSeekableScheduling(t *testing.T) {
+	sizes := []int{1024, 66 << 20}
+
+	for _, size := range sizes {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			var compressed bytes.Buffer
+
+			writer, err := NewSeekableWriter(&compressed, 3, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			writer.frameSize = size
+			data := make([]byte, size)
+
+			_, err = writer.Write(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = writer.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			reader, err := OpenSeekable(bytes.NewReader(compressed.Bytes()), int64(compressed.Len()), 8)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer reader.Close()
+
+			if len(reader.workers) != 1 || reader.buffered != (size <= seekBufferLimit) {
+				t.Fatal("incorrect sequential/fallback selection")
+			}
+
+			if reader.buffered && reader.workers[0].jobs != nil {
+				t.Fatal("single-frame reader started a worker")
+			}
+
+			actual, err := io.ReadAll(reader)
+			if err != nil || !bytes.Equal(actual, data) {
+				t.Fatalf("decoded frame: %v", err)
+			}
+		})
+	}
+}
+
 func TestNativeLevels(t *testing.T) {
 	cases := []levelCase{
 		{Gzip, [9]int{1, 2, 3, 4, 5, 6, 7, 8, 9}},

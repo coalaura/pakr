@@ -276,6 +276,11 @@ func prepareZip(item *entry, worker *zipWorker, copying *copier) zipResult {
 }
 
 func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) error {
+	err := checkZipEntries(source, size, extract.budget)
+	if err != nil {
+		return err
+	}
+
 	archive, err := zip.NewReader(source, size)
 	if err != nil {
 		return err
@@ -294,6 +299,15 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 	if err != nil {
 		return err
 	}
+
+	for _, file := range archive.File {
+		err = extract.budget.entry(int64(file.UncompressedSize64))
+		if err != nil {
+			return err
+		}
+	}
+
+	extract.prechecked = true
 
 	ctx, cancel := context.WithCancel(extract.copying.ctx)
 	defer cancel()
@@ -322,7 +336,7 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 
 			decoder := zipDecoder{codec: codec}
 			copying := copier{ctx: ctx, progress: extract.copying.progress, buffer: make([]byte, native.BufferSize)}
-			worker := extractor{root: extract.root, copying: &copying}
+			worker := extractor{root: extract.root, copying: &copying, budget: extract.budget, prechecked: true}
 
 			for file := range jobs {
 				workerErr = decoder.extract(file, &worker)

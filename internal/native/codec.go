@@ -139,11 +139,17 @@ func (writer *Writer) Close() error {
 		return writer.err
 	}
 
-	defer C.pakr_codec_free(writer.codec)
+	defer writer.release()
 
-	defer func() {
-		writer.codec = nil
-	}()
+	return writer.finish()
+}
+
+func (writer *Writer) release() {
+	C.pakr_codec_free(writer.codec)
+	writer.codec = nil
+}
+
+func (writer *Writer) finish() error {
 
 	if writer.err != nil {
 		return writer.err

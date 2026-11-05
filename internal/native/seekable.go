@@ -20,7 +20,7 @@ const (
 	seekableMagic   = 0x8f92eab1
 	seekTableMagic  = 0x184d2a5e
 	seekFrameSize   = 8 << 20
-	seekBufferLimit = 16 << 20
+	seekBufferLimit = 65 << 20
 )
 
 type SeekableWriter struct {
@@ -32,6 +32,7 @@ type SeekableWriter struct {
 	frames     uint32
 	level      int
 	threads    int
+	frameSize  int
 	err        error
 	closed     bool
 }
@@ -48,9 +49,19 @@ type seekFrame struct {
 }
 
 type seekWorker struct {
-	jobs   chan seekFrame
-	pipe   *io.PipeReader
-	output *io.PipeWriter
+	jobs       chan seekFrame
+	pipe       *io.PipeReader
+	output     *io.PipeWriter
+	results    chan seekResult
+	frame      seekFrame
+	compressed []byte
+	decoded    []byte
+	decoder    unsafe.Pointer
+}
+
+type seekResult struct {
+	data []byte
+	err  error
 }
 
 type SeekableReader struct {
@@ -65,6 +76,9 @@ type SeekableReader struct {
 	checksums bool
 	err       error
 	closed    bool
+	buffered  bool
+	current   []byte
+	active    bool
 }
 
 func (counter frameCounter) Write(data []byte) (int, error) {
@@ -89,13 +103,13 @@ func (writer *SeekableWriter) Write(data []byte) (int, error) {
 			}
 		}
 
-		count := min(len(data), seekFrameSize-int(writer.decoded))
+		count := min(len(data), writer.frameSize-int(writer.decoded))
 		count, writer.err = writer.frame.Write(data[:count])
 		writer.decoded += uint32(count)
 		written += count
 		data = data[count:]
 
-		if writer.err == nil && writer.decoded == seekFrameSize {
+		if writer.err == nil && int(writer.decoded) == writer.frameSize {
 			writer.err = writer.finishFrame()
 		}
 	}
@@ -113,7 +127,7 @@ func (writer *SeekableWriter) Close() error {
 	defer os.Remove(writer.table.Name())
 	defer writer.table.Close()
 
-	if writer.err == nil && (writer.frame != nil || writer.frames == 0) {
+	if writer.err == nil && (writer.decoded != 0 || writer.frames == 0) {
 		if writer.frame == nil {
 			writer.frame, writer.err = NewWriter(frameCounter{owner: writer}, Zstd, writer.level, writer.threads)
 		}
@@ -124,7 +138,7 @@ func (writer *SeekableWriter) Close() error {
 	}
 
 	if writer.frame != nil {
-		writer.err = errors.Join(writer.err, writer.frame.Close())
+		writer.frame.release()
 	}
 
 	if writer.err != nil {
@@ -158,9 +172,9 @@ func (writer *SeekableWriter) Close() error {
 }
 
 func (writer *SeekableWriter) finishFrame() error {
-	err := writer.frame.Close()
-	writer.frame = nil
-
+	// ZSTD_e_end completes one independent frame while retaining the context,
+	// parameters and native worker pool for the next frame.
+	err := writer.frame.finish()
 	if err != nil {
 		return err
 	}
@@ -186,6 +200,14 @@ func (writer *SeekableWriter) finishFrame() error {
 func (reader *SeekableReader) Read(data []byte) (int, error) {
 	if reader.closed {
 		return 0, errors.New("read from closed seekable stream")
+	}
+
+	if len(data) == 0 {
+		return 0, nil
+	}
+
+	if reader.buffered {
+		return reader.readBuffered(data)
 	}
 
 	for reader.finished < reader.frames && reader.err == nil {
@@ -219,6 +241,53 @@ func (reader *SeekableReader) Read(data []byte) (int, error) {
 	return 0, io.EOF
 }
 
+func (reader *SeekableReader) readBuffered(data []byte) (int, error) {
+	for reader.finished < reader.frames && reader.err == nil {
+		worker := &reader.workers[int(reader.finished)%len(reader.workers)]
+
+		if !reader.active {
+			var result seekResult
+
+			if len(reader.workers) == 1 {
+				result = reader.decodeFrame(worker, worker.frame)
+			} else {
+				result = <-worker.results
+			}
+
+			reader.current = result.data
+			reader.err = result.err
+			reader.active = true
+
+			if reader.err != nil {
+				break
+			}
+		}
+
+		count := copy(data, reader.current)
+
+		reader.current = reader.current[count:]
+		if len(reader.current) == 0 {
+			// A slot is reused only after its result has been consumed completely.
+			reader.active = false
+			reader.finished++
+
+			if reader.scheduled < reader.frames {
+				reader.err = reader.schedule(worker)
+			}
+		}
+
+		if count != 0 {
+			return count, reader.err
+		}
+	}
+
+	if reader.err != nil {
+		return 0, reader.err
+	}
+
+	return 0, io.EOF
+}
+
 func (reader *SeekableReader) Close() error {
 	if reader.closed {
 		return nil
@@ -232,10 +301,16 @@ func (reader *SeekableReader) Close() error {
 			worker.pipe.Close()
 		}
 
-		close(worker.jobs)
+		if worker.jobs != nil {
+			close(worker.jobs)
+		}
 	}
 
 	reader.pending.Wait()
+
+	for index := range reader.workers {
+		C.pakr_zstd_decoder_free(reader.workers[index].decoder)
+	}
 
 	return nil
 }
@@ -249,49 +324,53 @@ func (reader *SeekableReader) schedule(worker *seekWorker) error {
 	frame.offset = reader.offset
 	reader.offset += int64(frame.compressed)
 
-	worker.pipe, worker.output = io.Pipe()
-	worker.jobs <- frame
+	if reader.buffered {
+		if len(reader.workers) == 1 {
+			worker.frame = frame
+		} else {
+			worker.jobs <- frame
+		}
+	} else {
+		worker.pipe, worker.output = io.Pipe()
+		worker.jobs <- frame
+	}
 
 	reader.scheduled++
 
 	return nil
 }
 
-func (reader *SeekableReader) run(worker *seekWorker) {
-	var (
-		compressed []byte
-		decoded    []byte
-	)
+func (reader *SeekableReader) decodeFrame(worker *seekWorker, frame seekFrame) seekResult {
+	worker.compressed = growBytes(worker.compressed, int(frame.compressed))
+	worker.decoded = growBytes(worker.decoded, int(frame.decoded))
 
+	_, err := reader.source.ReadAt(worker.compressed, frame.offset)
+	if err == nil {
+		status := C.pakr_zstd_frame(worker.decoder, unsafe.Pointer(unsafe.SliceData(worker.compressed)), C.size_t(len(worker.compressed)), unsafe.Pointer(unsafe.SliceData(worker.decoded)), C.size_t(len(worker.decoded)))
+		if status != 0 {
+			err = errors.New("invalid seekable zstd frame or size")
+		}
+	}
+
+	if err == nil {
+		err = checkSeekHash(worker.decoded, frame.checksum, reader.checksums)
+	}
+
+	return seekResult{data: worker.decoded, err: err}
+}
+
+func (reader *SeekableReader) runBuffered(worker *seekWorker) {
+	for frame := range worker.jobs {
+		worker.results <- reader.decodeFrame(worker, frame)
+	}
+}
+
+func (reader *SeekableReader) run(worker *seekWorker) {
 	buffer := make([]byte, BufferSize)
 
 	for frame := range worker.jobs {
 		output := worker.output
-
-		var err error
-
-		if frame.compressed <= seekBufferLimit && frame.decoded <= seekBufferLimit {
-			compressed = growBytes(compressed, int(frame.compressed))
-			decoded = growBytes(decoded, int(frame.decoded))
-
-			_, err = reader.source.ReadAt(compressed, frame.offset)
-			if err == nil {
-				status := C.pakr_zstd_frame(unsafe.Pointer(unsafe.SliceData(compressed)), C.size_t(len(compressed)), unsafe.Pointer(unsafe.SliceData(decoded)), C.size_t(len(decoded)))
-				if status != 0 {
-					err = errors.New("invalid seekable zstd frame or size")
-				}
-			}
-
-			if err == nil {
-				err = checkSeekHash(decoded, frame.checksum, reader.checksums)
-			}
-
-			if err == nil {
-				err = writeBytes(output, decoded)
-			}
-		} else {
-			err = reader.streamFrame(frame, output, buffer)
-		}
+		err := reader.streamFrame(frame, output, buffer)
 
 		output.CloseWithError(err)
 	}
@@ -360,7 +439,7 @@ func NewSeekableWriter(target io.Writer, level, threads int) (*SeekableWriter, e
 		return nil, err
 	}
 
-	return &SeekableWriter{target: target, table: table, level: level, threads: threads}, nil
+	return &SeekableWriter{target: target, table: table, level: level, threads: threads, frameSize: seekFrameSize}, nil
 }
 
 // OpenSeekable returns nil, nil when the input is an ordinary Zstandard stream.
@@ -413,7 +492,13 @@ func OpenSeekable(source io.ReaderAt, size int64, threads int) (*SeekableReader,
 
 	table := bufio.NewReader(io.NewSectionReader(source, start+8, tableSize-9))
 
-	var offset int64
+	var (
+		offset            int64
+		maximumCompressed uint64
+		maximumDecoded    uint64
+	)
+
+	buffered := true
 
 	for range frames {
 		frame, err := readSeekFrame(table, checksums)
@@ -428,7 +513,11 @@ func OpenSeekable(source io.ReaderAt, size int64, threads int) (*SeekableReader,
 
 		if frame.compressed > seekBufferLimit || frame.decoded > seekBufferLimit {
 			threads = 1
+			buffered = false
 		}
+
+		maximumCompressed = max(maximumCompressed, uint64(frame.compressed))
+		maximumDecoded = max(maximumDecoded, uint64(frame.decoded))
 	}
 
 	if offset != start {
@@ -437,15 +526,39 @@ func OpenSeekable(source io.ReaderAt, size int64, threads int) (*SeekableReader,
 
 	table.Reset(io.NewSectionReader(source, start+8, tableSize-9))
 
-	reader := &SeekableReader{source: source, table: table, frames: frames, checksums: checksums, workers: make([]seekWorker, min(max(1, threads), 8, int(frames)))}
+	// Bound retained frame buffers independently of the requested worker budget.
+	maximum := maximumCompressed + maximumDecoded
+	threads = min(max(1, threads), max(1, int((256<<20)/max(1, maximum))))
+
+	reader := &SeekableReader{source: source, table: table, frames: frames, checksums: checksums, buffered: buffered, workers: make([]seekWorker, min(threads, 8, int(frames)))}
 
 	for index := range reader.workers {
 		worker := &reader.workers[index]
-		worker.jobs = make(chan seekFrame)
 
-		reader.pending.Go(func() {
-			reader.run(worker)
-		})
+		if buffered {
+			worker.decoder = C.pakr_zstd_decoder_new()
+			if worker.decoder == nil {
+				reader.workers = reader.workers[:index+1]
+				reader.Close()
+
+				return nil, errors.New("allocate seekable decoder")
+			}
+
+			if len(reader.workers) > 1 {
+				worker.jobs = make(chan seekFrame)
+				worker.results = make(chan seekResult, 1)
+
+				reader.pending.Go(func() {
+					reader.runBuffered(worker)
+				})
+			}
+		} else {
+			worker.jobs = make(chan seekFrame)
+
+			reader.pending.Go(func() {
+				reader.run(worker)
+			})
+		}
 
 		err = reader.schedule(worker)
 		if err != nil {

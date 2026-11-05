@@ -314,6 +314,69 @@ func benchmarkCodec(b *testing.B, data []byte, format, level, threads int) {
 	b.ReportMetric(float64(compressed.Len())/float64(len(data)), "output/input")
 }
 
+func BenchmarkSeekableFrames(b *testing.B) {
+	data := benchmarkData("mixed", 128<<20)
+	frames := []int{8, 16, 32, 64}
+	workers := []int{1, 4, 8}
+
+	for _, frame := range frames {
+		var compressed bytes.Buffer
+
+		encode := func() {
+			compressed.Reset()
+
+			writer, err := NewSeekableWriter(&compressed, 3, 4)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			writer.frameSize = frame << 20
+
+			_, err = writer.Write(data)
+			closeErr := writer.Close()
+
+			if err != nil || closeErr != nil {
+				b.Fatalf("encode: %v, %v", err, closeErr)
+			}
+		}
+
+		encode()
+
+		b.Run(fmt.Sprintf("%dMiB/compress", frame), func(b *testing.B) {
+			b.SetBytes(int64(len(data)))
+			b.ReportAllocs()
+
+			for b.Loop() {
+				encode()
+			}
+
+			b.ReportMetric(float64(compressed.Len())/float64(len(data)), "output/input")
+		})
+
+		for _, threads := range workers {
+			b.Run(fmt.Sprintf("%dMiB/decompress%d", frame, threads), func(b *testing.B) {
+				b.SetBytes(int64(len(data)))
+				b.ReportAllocs()
+
+				for b.Loop() {
+					reader, err := OpenSeekable(bytes.NewReader(compressed.Bytes()), int64(compressed.Len()), threads)
+					if err != nil {
+						b.Fatal(err)
+					}
+
+					_, err = io.Copy(io.Discard, reader)
+
+					reader.Close()
+
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func benchmarkWriter(target io.Writer, format, level, threads int) (io.WriteCloser, error) {
 	if format == Gzip {
 		return NewGzipWriter(target, level, threads)

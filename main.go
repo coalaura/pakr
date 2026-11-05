@@ -99,6 +99,10 @@ func flags(packing bool) []cli.Flag {
 		result = append(result, &cli.StringFlag{Name: "preset", Aliases: []string{"p"}, Usage: "fast, balanced, or best (alternative to --level)"})
 		result = append(result, &cli.BoolFlag{Name: "max", Usage: "maximum practical effort, XZ extreme, and all CPUs within memory budgets; explicit settings override"})
 		result = append(result, &cli.BoolFlag{Name: "seekable", Usage: "write independent ZSTD frames and the standard seek table (zst/tar.zst only)"})
+	} else {
+		result = append(result, &cli.StringFlag{Name: "max-output", Value: "16TiB", Usage: "maximum extracted payload bytes (bytes, KiB, MiB, GiB, TiB; 0 disables)"})
+		result = append(result, &cli.StringFlag{Name: "max-file-size", Value: "1TiB", Usage: "maximum individual extracted file size (same units; 0 disables)"})
+		result = append(result, &cli.Uint64Flag{Name: "max-entries", Value: pak.DefaultMaxEntries, Usage: "maximum archive entries, including directories and links (0 disables)"})
 	}
 
 	return result
@@ -216,6 +220,20 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 		if options.Level < 1 || options.Level > 9 {
 			return options, fmt.Errorf("--level must be from 1 to 9")
 		}
+	} else {
+		limits := &pak.ExtractionLimits{MaxEntries: command.Uint64("max-entries")}
+
+		limits.MaxOutput, err = parseSize(command.String("max-output"))
+		if err != nil {
+			return options, fmt.Errorf("--max-output: %w", err)
+		}
+
+		limits.MaxFileSize, err = parseSize(command.String("max-file-size"))
+		if err != nil {
+			return options, fmt.Errorf("--max-file-size: %w", err)
+		}
+
+		options.Limits = limits
 	}
 
 	if !command.Bool("quiet") {
@@ -261,7 +279,7 @@ func quietRequested(arguments []string) bool {
 			if err == nil {
 				quiet = parsed
 			}
-		case "o", "output", "f", "format", "t", "threads", "l", "level", "p", "preset":
+		case "o", "output", "f", "format", "t", "threads", "l", "level", "p", "preset", "max-output", "max-file-size", "max-entries":
 			if !assigned {
 				index++
 			}
@@ -275,4 +293,30 @@ func terminal(writer io.Writer) bool {
 	file, ok := writer.(*os.File)
 
 	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func parseSize(value string) (uint64, error) {
+	shift := 0
+
+	switch {
+	case strings.HasSuffix(value, "KiB"):
+		shift = 10
+	case strings.HasSuffix(value, "MiB"):
+		shift = 20
+	case strings.HasSuffix(value, "GiB"):
+		shift = 30
+	case strings.HasSuffix(value, "TiB"):
+		shift = 40
+	}
+
+	if shift != 0 {
+		value = value[:len(value)-3]
+	}
+
+	size, err := strconv.ParseUint(value, 10, 64-shift)
+	if err != nil {
+		return 0, errors.New("expected nonnegative integer bytes or KiB/MiB/GiB/TiB")
+	}
+
+	return size << shift, nil
 }

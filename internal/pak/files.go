@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -91,7 +92,13 @@ func (copying *copier) file(target io.Writer, item *entry) error {
 
 func collect(ctx context.Context, inputs []string, output string) ([]entry, int64, error) {
 	entries := make([]entry, 0, len(inputs))
-	names := make(map[string]struct{}, len(inputs))
+
+	// One lexical walk has unique paths; only overlapping input roots need a set.
+	var names map[string]struct{}
+
+	if len(inputs) > 1 {
+		names = make(map[string]struct{}, len(inputs))
+	}
 
 	var total int64
 
@@ -141,7 +148,9 @@ func collect(ctx context.Context, inputs []string, output string) ([]entry, int6
 				return fmt.Errorf("duplicate archive path: %s", name)
 			}
 
-			names[name] = struct{}{}
+			if names != nil {
+				names[name] = struct{}{}
+			}
 
 			info, err := directory.Info()
 			if err != nil {
@@ -153,6 +162,10 @@ func collect(ctx context.Context, inputs []string, output string) ([]entry, int6
 			switch {
 			case info.Mode().IsRegular():
 				header.Size = info.Size()
+				if header.Size < 0 || header.Size > math.MaxInt64-total {
+					return errors.New("input sizes exceed supported total")
+				}
+
 				total += header.Size
 			case info.IsDir():
 				header.Kind = native.Directory
@@ -172,6 +185,14 @@ func collect(ctx context.Context, inputs []string, output string) ([]entry, int6
 				}
 			default:
 				return fmt.Errorf("unsupported file type: %s", filename)
+			}
+
+			if len(entries) == cap(entries) {
+				// Doubling avoids repeated copies of large metadata records on deep trees.
+				grown := make([]entry, len(entries), max(1024, 2*cap(entries)))
+				copy(grown, entries)
+
+				entries = grown
 			}
 
 			entries = append(entries, entry{path: filename, header: header})

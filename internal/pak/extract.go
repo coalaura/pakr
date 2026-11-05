@@ -16,6 +16,8 @@ type extractor struct {
 	root        *os.Root
 	copying     *copier
 	directories []native.Header
+	budget      *extractionBudget
+	prechecked  bool
 }
 
 func (extract *extractor) entry(header native.Header, source io.Reader) error {
@@ -29,12 +31,19 @@ func (extract *extractor) entry(header native.Header, source io.Reader) error {
 		return err
 	}
 
-	if name == "." && header.Kind == native.Directory {
-		return nil
+	if name == "." && header.Kind != native.Directory || header.Size < -1 {
+		return fmt.Errorf("invalid entry: %q", header.Name)
 	}
 
-	if name == "." || header.Size < -1 {
-		return fmt.Errorf("invalid entry: %q", header.Name)
+	if !extract.prechecked {
+		err = extract.budget.entry(header.Size)
+		if err != nil {
+			return err
+		}
+	}
+
+	if name == "." {
+		return nil
 	}
 
 	err = extract.root.MkdirAll(path.Dir(name), 0o755)
@@ -86,7 +95,9 @@ func (extract *extractor) file(name string, header native.Header, source io.Read
 		source = io.LimitReader(source, header.Size+1)
 	}
 
-	count, err := extract.copying.copy(file, source)
+	writer := extractionWriter{target: file, budget: extract.budget, declared: header.Size}
+
+	count, err := extract.copying.copy(&writer, source)
 	if err == nil && header.Size >= 0 && count != header.Size {
 		err = fmt.Errorf("size mismatch: expected %d bytes, got %d", header.Size, count)
 	}

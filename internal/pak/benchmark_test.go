@@ -47,6 +47,45 @@ func BenchmarkPack(b *testing.B) {
 	}
 }
 
+func BenchmarkCollect(b *testing.B) {
+	counts := []int{1000, 100000}
+
+	for _, count := range counts {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			directory := b.TempDir()
+
+			data := []byte("small source file\n")
+
+			for index := range count {
+				parent := filepath.Join(directory, strconv.Itoa(index/1000))
+
+				if index%1000 == 0 {
+					err := os.Mkdir(parent, 0o700)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+
+				err := os.WriteFile(filepath.Join(parent, strconv.Itoa(index)), data, 0o600)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+
+			inputs := []string{directory}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				entries, total, err := collect(context.Background(), inputs, "")
+				if err != nil || len(entries) != count+(count+999)/1000+1 || total != int64(count*len(data)) {
+					b.Fatalf("collect: entries=%d bytes=%d error=%v", len(entries), total, err)
+				}
+			}
+		})
+	}
+}
+
 func benchmarkPack(b *testing.B, name, directory, source string, size int64) {
 	output := filepath.Join(directory, "archive")
 	options := Options{Output: output, Level: 3, Threads: 4}

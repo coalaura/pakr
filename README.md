@@ -51,6 +51,8 @@ Raw compression formats such as `gz` accept exactly one regular file. Use a cont
 
 Stdin is streamed directly for sequential formats; only ZIP and 7z require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
 
+Extraction defaults to at most 16 TiB of total payload, 1 TiB per file and 10 million entries, including directories and links. Adjust these with `--max-output`, `--max-file-size` and `--max-entries`; `0` disables the corresponding limit. Byte limits accept integer bytes or `KiB`, `MiB`, `GiB` and `TiB` suffixes, for example `pakr unpack backup.zip -o restored --max-output 32TiB --max-file-size 2TiB`. Declared sizes are checked before extraction, and streams without sizes are checked as they produce output. ZIP workers share one budget. Exceeding a limit cancels extraction and removes incomplete files; already completed entries remain. Payload limits exclude container headers/padding and do not impose a whole-process RSS limit on native decoders or metadata.
+
 ### Options
 
 Flags may follow input paths.
@@ -64,6 +66,9 @@ Flags may follow input paths.
 | `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
 | `--max` | Maximum practical effort: all logical CPUs within codec resource budgets, level 9 and XZ's extreme preset; explicit `--threads`, `--level` or `--preset` settings override their respective defaults regardless of argument order; packing only |
 | `--seekable` | Opt-in official seekable Zstandard output for `zst` and `tar.zst`; packing only |
+| `--max-output` | Total extracted payload limit, default `16TiB`; unpacking only |
+| `--max-file-size` | Individual extracted file limit, default `1TiB`; unpacking only |
+| `--max-entries` | Archive entry limit, default `10000000` (10 mil); unpacking only |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -104,7 +109,9 @@ Zero and negative settings in this table still compress; they do not select stor
 
 ZIP entries up to 8 MiB use reusable libdeflate contexts; larger entries stream through zlib-ng. ZIP extraction validates conflicting paths before dispatching independent files and creates symlinks after file workers finish. Zstandard and XZ reduce native encoder worker counts using a 2 GiB memory estimate; BZIP2 and LZ4 bound worker buffers/state to approximately 256 MiB. These are codec working-memory budgets, not whole-process RSS guarantees; archive metadata, parallel decoder indexes and libarchive's 7z decoder are outside these budgets. XZ decoding permits up to 2 GiB and reduces parallelism above 512 MiB; ordinary Zstandard decoding limits windows to 1 GiB.
 
-`--seekable` writes independent 8 MiB Zstandard frames followed by the official seek table. Ordinary Zstandard tools can decode the result. Pakr detects the table in files and decodes frames with up to eight bounded workers; piped input still decodes sequentially. The writer spools only the seek index to a temporary file. External frames larger than 16 MiB use sequential streaming to avoid unbounded frame buffers. Independent frames can reduce compression ratio, so ordinary Zstandard output remains the default.
+`--seekable` writes independent 8 MiB Zstandard frames followed by the official seek table. Ordinary Zstandard tools can decode the result. Encoder contexts and native workers are reused between frames. Pakr detects the table in files and decodes frames with reusable contexts and up to eight workers, reducing concurrency to keep retained frame buffers within 256 MiB. Single-worker buffered decoding avoids worker goroutines; piped input still decodes sequentially. The writer spools only the seek index to a temporary file. External frames with compressed or decoded sizes above 65 MiB use sequential streaming. Independent frames can reduce compression ratio and ordinary Zstandard can still be faster, so seekable output remains opt-in.
+
+Packing retains one metadata record per entry for deterministic ordering, complete preflight checks and accurate progress totals. A single input tree does not need a separate duplicate-path set; multiple input roots retain that check. Collection remains proportional to entry count rather than using a second traversal or disk-backed index.
 
 ## Status output
 

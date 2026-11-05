@@ -20,6 +20,7 @@ type Options struct {
 	Level    int
 	Extreme  bool
 	Seekable bool
+	Limits   *ExtractionLimits
 	Log      *minimal.Minimal
 	Progress io.Writer
 }
