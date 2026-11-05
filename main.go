@@ -50,6 +50,7 @@ func command() *cli.Command {
 	return &cli.Command{
 		Name:            "pakr",
 		Usage:           "fast, uncomplicated packing and unpacking",
+		Description:     "Includes BZIP3, copyright (C) 2022-2024 Kamila Szewczyk, under LGPLv3. License texts, corresponding source and relinking permission are in the matching pakr-source release archive; see THIRD_PARTY.md.",
 		Version:         version,
 		HideHelpCommand: true,
 		Flags: []cli.Flag{
@@ -85,13 +86,14 @@ func flags(packing bool) []cli.Flag {
 
 	if packing {
 		outputUsage = "output file, or - for stdout (default: archive.<format>)"
-		formatUsage = "format, e.g. tar.zst, tgz, zip, gz, xz (default: infer output, then tar.zst)"
+		formatUsage = "format, e.g. tar.zst, tgz, zip, gz, bz3, tbz3, xz (default: infer output, then tar.zst)"
 	}
 
 	result := []cli.Flag{
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
+		&cli.StringFlag{Name: "memory", Value: "2GiB", Usage: "codec working-memory budget (currently BZIP3; bytes, KiB, MiB, GiB, TiB)"},
 	}
 
 	if packing {
@@ -178,6 +180,11 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 	name := command.String("format")
 
 	var err error
+
+	options.Memory, err = parseSize(command.String("memory"))
+	if err != nil || options.Memory == 0 {
+		return options, fmt.Errorf("--memory must be a positive size in bytes, KiB, MiB, GiB or TiB")
+	}
 
 	if name != "" {
 		options.Format, err = pak.ParseFormat(name)

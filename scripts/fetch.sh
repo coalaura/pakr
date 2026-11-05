@@ -21,3 +21,8 @@ while read -r name version checksum url; do
 		touch "$cache/src/$name/.pakr-$checksum"
 	fi
 done < "$root/scripts/native.lock"
+
+if [[ ! -f "$cache/src/bzip3/.pakr-allocation-check" ]]; then
+	patch -d "$cache/src/bzip3" -p1 < "$root/scripts/patches/bzip3-allocation.patch"
+	touch "$cache/src/bzip3/.pakr-allocation-check"
+fi

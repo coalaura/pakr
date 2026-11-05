@@ -41,16 +41,32 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --workdir "$GITHUB_WORKSPACE" \
-            --env PAKR_TARGET_OS --env PAKR_TARGET_ARCH --env JOBS=2 \
+            --env PAKR_TARGET_OS --env PAKR_TARGET_ARCH --env BUILD_IMAGE --env JOBS=2 \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint sh "$BUILD_IMAGE" -ec '
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" "$PAKR_TARGET_ARCH"
               if [ "$PAKR_TARGET_OS/$PAKR_TARGET_ARCH" = linux/amd64 ]; then
                 bash scripts/build.sh linux amd64 test
+                cmake -S .native/src/bzip3 -B .native/build/bzip3-cli \
+                  -DCMAKE_TOOLCHAIN_FILE="$PWD/.native/build/linux-amd64/toolchain/toolchain.cmake" \
+                  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+                  -DBZIP3_BUILD_APPS=ON -DBZIP3_ENABLE_PTHREAD=ON -DBZIP3_ENABLE_ARCH_NATIVE=OFF
+                cmake --build .native/build/bzip3-cli --parallel 2
+                BZIP3_CLI="$PWD/.native/build/bzip3-cli/bzip3" bash scripts/build.sh linux amd64 test -tags=integration -run=TestBzip3CLI
+                bash scripts/source.sh "${{ github.ref_name }}"
               fi
               chown -R "$HOST_UID:$HOST_GID" .native
+              if [ -d dist ]; then chown -R "$HOST_UID:$HOST_GID" dist; fi
             '
+
+      - name: Upload corresponding source
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pakr-corresponding-source
+          path: dist/pakr-source-*.tar.gz
+          if-no-files-found: error
 
       - name: Build
         id: build
@@ -108,12 +124,23 @@ jobs:
         with:
           subject-checksums: dist/SHA256SUMS
 
+      - name: Download corresponding source
+        uses: actions/download-artifact@v8
+        with:
+          name: pakr-corresponding-source
+          path: dist
+
+      - name: Checksum corresponding source
+        working-directory: dist
+        run: sha256sum -b pakr-source-*.tar.gz > SOURCE_SHA256SUMS
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/pakr-*
             dist/SHA256SUMS
+            dist/SOURCE_SHA256SUMS
           fail_on_unmatched_files: true
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}

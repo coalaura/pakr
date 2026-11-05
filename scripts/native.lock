@@ -2,6 +2,7 @@
 zlib-ng 2.3.3 f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1 https://codeload.github.com/zlib-ng/zlib-ng/tar.gz/refs/tags/2.3.3
 zstd 1.5.7 37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3 https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7
 bzip2 1.0.8 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269 https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
+bzip3 1.5.5 d61c05785bccb50d4af75107556d9fc7373995f873270b729184509e9f1be6dd https://codeload.github.com/iczelia/bzip3/tar.gz/refs/tags/1.5.5
 xz 5.8.4 b6b34c52e672e810d339db14e0c10b5b6f5f67a30d8d05cdac5d8cb4d82f78d5 https://codeload.github.com/tukaani-project/xz/tar.gz/refs/tags/v5.8.4
 lz4 1.11.0 247e5fa64da5f7b75ee3dd3bed484076396c9ebe8254d9ccf693eb62800c5e26 https://codeload.github.com/lz4/lz4/tar.gz/refs/tags/v1.11.0
 brotli 1.2.1 98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.2.1

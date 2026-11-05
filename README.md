@@ -66,6 +66,7 @@ Flags may follow input paths.
 | `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
 | `--max` | Maximum practical effort: all logical CPUs within codec resource budgets, level 9 and XZ's extreme preset; explicit `--threads`, `--level` or `--preset` settings override their respective defaults regardless of argument order; packing only |
 | `--seekable` | Opt-in official seekable Zstandard output for `zst` and `tar.zst`; packing only |
+| `--memory` | Codec working-memory budget for packing and unpacking (currently enforced by BZIP3), default `2GiB`; positive bytes or a `KiB`, `MiB`, `GiB`, `TiB` size |
 | `--max-output` | Total extracted payload limit, default `16TiB`; unpacking only |
 | `--max-file-size` | Individual extracted file limit, default `1TiB`; unpacking only |
 | `--max-entries` | Archive entry limit, default `10000000` (10 mil); unpacking only |
@@ -83,13 +84,14 @@ Flags may follow input paths.
 | `gz`, `gzip` | ISA-L at levels 1-4; zlib-ng at levels 5-9 | zlib-ng for small/piped streams; rapidgzip for large files |
 | `zst`, `zstd` | libzstd | libzstd |
 | `bz2`, `bzip2` | libbz2, parallel concatenated streams | libbz2 for small/piped streams; indexed_bzip2 for large files |
+| `bz3`, `bzip3` | libbzip3, parallel independent blocks | libbzip3, parallel independent blocks |
 | `xz`, `lzma2` | liblzma, XZ container | liblzma |
 | `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng |
 | `lz4` | liblz4 multithreaded frame API | liblz4 frame API |
 | `7z` | libarchive with LZMA2 | libarchive |
 | `br`, `brotli` | libbrotlienc | libbrotlidec |
 
-Every raw codec can be combined with tar: `tar.gz`, `tar.zst`, `tar.bz2`, `tar.xz`, `tar.lz4` and `tar.br`. Aliases include `tgz`, `tbz`, `tbz2`, `txz` and `tzst`. `lzma2` selects an XZ container, not a headerless LZMA2 stream or legacy `.lzma` file.
+Every raw codec can be combined with tar: `tar.gz`, `tar.zst`, `tar.bz2`, `tar.bz3`, `tar.xz`, `tar.lz4` and `tar.br`. Aliases include `tgz`, `tbz`, `tbz2`, `tbz3`, `txz` and `tzst`. `lzma2` selects an XZ container, not a headerless LZMA2 stream or legacy `.lzma` file.
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded. Gzip uses parallel, independent 1 MiB members in a standard concatenated stream. Gzip and ZIP compression cap in-flight workers at 16 to bound buffering.
 
@@ -103,11 +105,16 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | LZ4 | -4, -1, 0, 3, 5, 7, 9, 10, maximum HC (currently 12) |
 | GZIP | ISA-L 0, 1, 2, 3; then zlib-ng 5, 6, 7, 8, 9 |
 | BZIP2 / streaming ZIP DEFLATE | 1, 2, 3, 4, 5, 6, 7, 8, 9 |
+| BZIP3 block size (MiB) | 1, 4, 16, 32, 64, 128, 256, 384, 511 |
 | XZ / 7z LZMA2 | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
 
 Zero and negative settings in this table still compress; they do not select store mode. Zstandard -3 and LZ4 acceleration 5 (frame level -4) are practical fast endpoints, rather than their much broader acceleration limits. Explicit `--level 9` or `--preset best` overrides `--max`'s XZ extreme setting. Libarchive's LZMA2 writer and Brotli are single-threaded.
 
 ZIP entries up to 8 MiB use reusable libdeflate contexts; larger entries stream through zlib-ng. ZIP extraction validates conflicting paths before dispatching independent files and creates symlinks after file workers finish. Zstandard and XZ reduce native encoder worker counts using a 2 GiB memory estimate; BZIP2 and LZ4 bound worker buffers/state to approximately 256 MiB. These are codec working-memory budgets, not whole-process RSS guarantees; archive metadata, parallel decoder indexes and libarchive's 7z decoder are outside these budgets. XZ decoding permits up to 2 GiB and reduces parallelism above 512 MiB; ordinary Zstandard decoding limits windows to 1 GiB.
+
+BZIP3 uses the official `BZ3v1` format: a 9-byte file header and ordered, CRC-checked independent blocks. Encoding and decoding reuse one native state and one in-place buffer per active worker, with bounded queues and deterministic output. `--memory` caps the estimated codec memory: each worker reserves `bz3_min_memory_needed(block) + bz3_bound(block) + 2*block + 1MiB`, plus a shared 1 MiB allowance. This includes worst-case libsais scratch and queued results; it is not a whole-process RSS limit. Workers are reduced to fit, but the requested block size is never silently reduced to fit the budget. Levels 7-9 exceed the default budget even with one worker; for level 9 or `--max`, explicitly allow at least approximately 4.02 GiB, for example `pakr pack data -f bz3 --max --memory 8GiB`. The decoder applies the same preflight to the file's declared block size. Other codecs retain the fixed budgets described above.
+
+Empty BZIP3 output is just a header. Inputs of at most 65 KiB declare a 65 KiB block and use at most one worker, avoiding large decoder allocations; the requested level's budget is still checked first. Larger inputs retain the selected block size. Native block operations finish before cancellation can reclaim their state; blocking input/output also depends on the underlying stream. Incomplete headers/blocks, invalid lengths and CRC failures are rejected. The format has no end marker or total-length field, so truncation exactly between complete blocks cannot be detected. BZIP2 and BZIP3 are distinct formats.
 
 `--seekable` writes independent 8 MiB Zstandard frames followed by the official seek table. Ordinary Zstandard tools can decode the result. Encoder contexts and native workers are reused between frames. Pakr detects the table in files and decodes frames with reusable contexts and up to eight workers, reducing concurrency to keep retained frame buffers within 256 MiB. Single-worker buffered decoding avoids worker goroutines; piped input still decodes sequentially. The writer spools only the seek index to a temporary file. External frames with compressed or decoded sizes above 65 MiB use sequential streaming. Independent frames can reduce compression ratio and ordinary Zstandard can still be faster, so seekable output remains opt-in.
 
@@ -161,8 +168,10 @@ bash scripts/build.sh linux amd64 test -tags integration
 bash scripts/build.sh linux amd64 test -run '^$' -bench . -benchmem
 ```
 
-Integration tests require `gzip`, `zstd`, `bzip2`, `xz`, `lz4`, `brotli` and `bsdtar` on `PATH`. Tests exercise the native backends, archive round trips, truncated streams, Unicode paths, overwrite refusal, path traversal and CLI pipelines. Benchmarks report throughput, Go allocations and output/input size; benchmark representative data on your deployment platform when choosing settings.
+Integration tests require `gzip`, `zstd`, `bzip2`, `bzip3`, `xz`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI` to an official BZIP3 executable outside `PATH` if needed. Tests exercise the native backends, independently generated BZIP3 fixtures, archive round trips, truncated streams, Unicode paths, overwrite refusal, path traversal and CLI pipelines. Benchmarks report throughput, Go allocations and output/input size; benchmark representative data on your deployment platform when choosing settings.
+
+The integration-only `TestBzip3BlockLevels` exercises native allocations at every level and needs several GiB of free memory. For separate encode/decode throughput, compressed size, process peak RSS and 1/4-worker comparisons against the official CLI and pakr's BZIP2, Zstandard and XZ, run `python3 scripts/bench-bzip3.py --pakr "$PWD/dist/pakr-linux-amd64" --bzip3 /path/to/bzip3` on Linux with Python 3.9+ and a C compiler available as `cc`. It prints CSV using 64 MiB synthetic text, repeated repository source, mixed source/random and incompressible corpora, with three-run medians. Temporary inputs and outputs are removed automatically; file I/O and process startup are included, and Go allocation counters do not measure native memory.
 
 ## Third-party software
 
-See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations.
+See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations. BZIP3 is statically linked under LGPLv3. Every binary release must also provide the matching `pakr-source-<version>.tar.gz` containing application and dependency sources, license texts and rebuild materials. The [BZIP3 licensing and relinking section](THIRD_PARTY.md#bzip3-licensing-and-relinking) grants the necessary application-code permissions and explains how to rebuild with a modified library. The executable remains a single binary; the source bundle is a distribution obligation, not a runtime dependency.

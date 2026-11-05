@@ -16,7 +16,7 @@ toolchain="$build/toolchain"
 mkdir -p "$prefix/include" "$prefix/lib" "$build"
 bash "$root/scripts/fetch.sh"
 
-signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/bzip2/CMakeLists.txt" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
+signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/patches/"*.patch "$root/scripts/bzip2/CMakeLists.txt" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
 signature=$(printf '%s' "$signature" | sha256sum | cut -d ' ' -f 1)
 (cd "$root/tools/toolchain" && go run -buildvcs=false . "$target" "$arch" "$toolchain")
 
@@ -60,6 +60,7 @@ sources="$root/.native/src"
 build_cmake zlib-ng "$sources/zlib-ng" -DZLIB_COMPAT=ON -DZLIB_ENABLE_TESTS=OFF -DZLIBNG_ENABLE_TESTS=OFF
 build_cmake zstd "$sources/zstd/build/cmake" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_MULTITHREAD_SUPPORT=ON
 build_cmake bzip2 "$root/scripts/bzip2" -DSOURCE="$sources/bzip2"
+build_cmake bzip3 "$sources/bzip3" -DBZIP3_BUILD_APPS=OFF -DBZIP3_ENABLE_PTHREAD=OFF -DBZIP3_ENABLE_ARCH_NATIVE=OFF
 build_cmake xz "$sources/xz" -DXZ_NLS=OFF -DXZ_TOOL_XZ=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF -DXZ_TOOL_LZMAINFO=OFF -DXZ_DOC=OFF -DXZ_EXTERNAL_SHA256=OFF
 build_cmake lz4 "$sources/lz4/build/cmake" -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF -DLZ4_STATIC_MULTITHREAD=ON
 build_cmake brotli "$sources/brotli" -DBROTLI_DISABLE_TESTS=ON

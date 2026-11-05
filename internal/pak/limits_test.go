@@ -176,7 +176,7 @@ func TestMetadataEntryLimits(t *testing.T) {
 }
 
 func TestExtractionLimits(t *testing.T) {
-	formats := []string{"tar", "tar.gz", "tar.zst", "zip", "7z", "gz", "zst", "bz2", "xz", "lz4", "br"}
+	formats := []string{"tar", "tar.gz", "tar.zst", "tar.bz3", "zip", "7z", "gz", "zst", "bz2", "bz3", "xz", "lz4", "br"}
 
 	for _, name := range formats {
 		t.Run(name, func(t *testing.T) {

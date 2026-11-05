@@ -10,6 +10,7 @@ zst     Fast       Very fast  High
 gz      Fast       Fast       Moderate
 zip     Fast       Fast       Moderate
 bz2     Slow       Moderate   Moderate-high
+bz3     Moderate   Moderate   Very high
 xz      Slow       Moderate   Very high
 7z      Slow       Moderate   Very high
 br      Fast       Fast       High
@@ -21,6 +22,8 @@ Raw codecs take one file; use tar.<codec> for multiple files or folders.
 Speeds assume level 3; higher levels can be much slower. Ratings are qualitative and vary with input, threads and hardware.
 Level 9 reaches each backend's standard maximum; --max also enables XZ extreme within resource budgets.
 Use --seekable with zst or tar.zst for independent frames and parallel file extraction.
+BZIP3 aliases: bzip3, tar.bz3, tbz3. Levels 1-9 use 1, 4, 16, 32, 64, 128, 256, 384, 511 MiB blocks.
+BZIP3 uses --memory (default 2GiB); raise it for high levels, including --max. Inputs <=65KiB declare 65KiB blocks.
 `
 
 func showFormats(writer io.Writer) error {

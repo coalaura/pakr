@@ -24,6 +24,7 @@ type commandOptionsCase struct {
 	threads   int
 	level     int
 	extreme   bool
+	memory    uint64
 }
 
 type commandFailureCase struct {
@@ -193,6 +194,8 @@ func TestCommandOptions(t *testing.T) {
 		{name: "max-balanced-before", arguments: []string{"pack", "-p", "balanced", "--max"}, threads: allThreads, level: 3},
 		{name: "max-best", arguments: []string{"pack", "--max", "--preset", "best"}, threads: allThreads, level: 9},
 		{name: "max-combined", arguments: []string{"pack", "-t", "4", "--max", "-l", "3"}, threads: 4, level: 3},
+		{name: "bzip3-max-budget", arguments: []string{"pack", "-f", "bz3", "--max", "--memory", "8GiB"}, threads: allThreads, level: 9, extreme: true, memory: 8 << 30},
+		{name: "bzip3-decode-budget", arguments: []string{"unpack", "--memory", "256MiB"}, threads: autoThreads, level: 3, memory: 256 << 20},
 	}
 
 	for _, scenario := range cases {
@@ -218,6 +221,15 @@ func TestCommandOptions(t *testing.T) {
 
 					if options.Extreme != scenario.extreme {
 						t.Fatalf("got extreme=%t, want %t", options.Extreme, scenario.extreme)
+					}
+
+					memory := scenario.memory
+					if memory == 0 {
+						memory = 2 << 30
+					}
+
+					if options.Memory != memory {
+						t.Fatalf("got codec memory=%d, want %d", options.Memory, memory)
 					}
 
 					return nil
@@ -246,6 +258,9 @@ func TestInvalidOptions(t *testing.T) {
 		{"--level", "0"},
 		{"--level", "10"},
 		{"--preset", "unknown"},
+		{"--memory", "0"},
+		{"--memory", "-1"},
+		{"--memory", "8GB"},
 		{"--preset", "fast", "--level", "1"},
 		{"--format", "unknown"},
 		{"--max", "--threads", "0"},
@@ -283,7 +298,7 @@ func TestUnpackRejectsMax(t *testing.T) {
 }
 
 func TestCommandStatusPipeline(t *testing.T) {
-	formats := []string{"tar", "tar.zst", "zip", "7z", "gz"}
+	formats := []string{"tar", "tar.zst", "tar.bz3", "zip", "7z", "gz", "bz3"}
 
 	for _, format := range formats {
 		t.Run(format, func(t *testing.T) {
@@ -359,7 +374,7 @@ func TestCommandStatusPipeline(t *testing.T) {
 
 			name := "MixedCase.txt"
 
-			if format == "gz" {
+			if format == "gz" || format == "bz3" {
 				name = "stdin"
 			}
 

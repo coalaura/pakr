@@ -17,6 +17,7 @@ type Options struct {
 	Format   Format
 	Output   string
 	Threads  int
+	Memory   uint64
 	Level    int
 	Extreme  bool
 	Seekable bool
@@ -195,6 +196,8 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 			codec, err = native.NewGzipWriter(target, options.Level, options.Threads)
 		} else if options.Format.Codec == native.Bzip2 && options.Threads > 1 {
 			codec, err = native.NewBzip2Writer(target, options.Level, options.Threads)
+		} else if options.Format.Codec == native.Bzip3 {
+			codec, err = native.NewBzip3Writer(copying.ctx, target, options.Level, options.Threads, options.Memory)
 		} else {
 			codec, err = native.NewWriterExtreme(target, options.Format.Codec, options.Level, options.Threads, options.Extreme)
 		}

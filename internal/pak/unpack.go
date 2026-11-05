@@ -160,6 +160,8 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	)
 
 	switch options.Format.Codec {
+	case native.Bzip3:
+		codec, err = native.NewBzip3Reader(extract.copying.ctx, source, options.Threads, options.Memory)
 	case native.Gzip, native.Bzip2:
 		if file != nil && size >= 1<<20 && options.Threads > 1 {
 			codec, err = native.OpenParallel(file.Name(), options.Format.Codec, min(options.Threads, 16))
@@ -305,6 +307,8 @@ func detectHeader(data []byte) (Format, error) {
 		name = "zst"
 	case bytes.HasPrefix(data, []byte("BZh")):
 		name = "bz2"
+	case bytes.HasPrefix(data, []byte("BZ3v1")):
+		name = "bz3"
 	case bytes.HasPrefix(data, []byte{0xfd, '7', 'z', 'X', 'Z', 0}):
 		name = "xz"
 	case bytes.HasPrefix(data, []byte{0x04, 0x22, 0x4d, 0x18}):

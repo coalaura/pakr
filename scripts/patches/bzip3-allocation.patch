@@ -1,0 +1,18 @@
+--- a/src/libbz3.c
++++ b/src/libbz3.c
+@@ -554,7 +554,6 @@
+ 
+     bz3_state->swap_buffer = malloc(bz3_bound(block_size));
+     bz3_state->sais_array = malloc(BWT_BOUND(block_size) * sizeof(s32));
+-    memset(bz3_state->sais_array, 0, sizeof(s32) * BWT_BOUND(block_size));
+ 
+     bz3_state->lzp_lut = calloc(1 << LZP_DICTIONARY, sizeof(s32));
+ 
+@@ -567,6 +566,7 @@
+         return NULL;
+     }
+ 
++    memset(bz3_state->sais_array, 0, sizeof(s32) * BWT_BOUND(block_size));
+     bz3_state->block_size = block_size;
+ 
+     bz3_state->last_error = BZ3_OK;
