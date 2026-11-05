@@ -6,6 +6,7 @@ Native source versions, URLs and checksums are recorded in `scripts/native.lock`
 | --- | --- |
 | zlib-ng | `zlib-ng/LICENSE.md` (zlib) |
 | Zstandard | `zstd/LICENSE` (BSD option) |
+| xxHash (Zstandard seek-table checksums) | `zstd/lib/common/xxhash.h` (BSD-2-Clause notice) |
 | bzip2 | `bzip2/LICENSE` |
 | liblzma | `xz/COPYING` and `xz/COPYING.0BSD` |
 | liblz4 | `lz4/lib/LICENSE` (BSD-2-Clause) |

@@ -2,6 +2,7 @@ package pak
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -17,6 +18,13 @@ import (
 func Unpack(ctx context.Context, input string, options Options, stdin io.Reader) error {
 	inputName := input
 
+	var (
+		source io.Reader
+		file   *os.File
+		size   int64
+		err    error
+	)
+
 	output := options.Output
 	if output == "" {
 		output = "."
@@ -28,47 +36,70 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	defer progress.Close()
 
 	if input == "-" {
-		temporary, err := os.CreateTemp("", "pakr-input-*")
-		if err != nil {
-			return err
-		}
+		buffered := bufio.NewReaderSize(stdin, 512)
 
-		defer os.Remove(temporary.Name())
+		if options.Format.Name == "" {
+			header, readErr := buffered.Peek(512)
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				return readErr
+			}
 
-		copying := copier{ctx: ctx, buffer: make([]byte, native.BufferSize)}
-
-		_, err = copying.copy(temporary, stdin)
-
-		err = closeWithError(temporary, err)
-		if err != nil {
-			return err
-		}
-
-		input = temporary.Name()
-	}
-
-	file, err := os.Open(input)
-	if err != nil {
-		return err
-	}
-
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	if !info.Mode().IsRegular() {
-		return errors.New("input must be a regular archive file or stdin (-)")
-	}
-
-	if options.Format.Name == "" {
-		options.Format, err = InferFormat(input)
-		if err != nil {
-			options.Format, err = detectFormat(file)
+			options.Format, err = detectHeader(header)
 			if err != nil {
 				return err
+			}
+		}
+
+		if options.Format.Container == "zip" || options.Format.Container == "7z" {
+			temporary, err := os.CreateTemp("", "pakr-input-*")
+			if err != nil {
+				return err
+			}
+
+			defer os.Remove(temporary.Name())
+
+			copying := copier{ctx: ctx, buffer: make([]byte, native.BufferSize)}
+
+			_, err = copying.copy(temporary, buffered)
+
+			err = closeWithError(temporary, err)
+			if err != nil {
+				return err
+			}
+
+			input = temporary.Name()
+		} else {
+			source = buffered
+		}
+	}
+
+	if source == nil {
+		file, err = os.Open(input)
+		if err != nil {
+			return err
+		}
+
+		defer file.Close()
+
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+
+		if !info.Mode().IsRegular() {
+			return errors.New("input must be a regular archive file or stdin (-)")
+		}
+
+		size = info.Size()
+		source = file
+
+		if options.Format.Name == "" {
+			options.Format, err = InferFormat(input)
+			if err != nil {
+				options.Format, err = detectFormat(file)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -91,11 +122,11 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 
 	switch options.Format.Container {
 	case "zip":
-		err = unpackZip(file, info.Size(), &extract)
+		err = unpackZip(file, size, options.Threads, &extract)
 	case "7z":
 		err = unpack7z(input, options.Threads, &extract)
 	default:
-		err = unpackStream(file, inputName, options, &extract)
+		err = unpackStream(source, file, size, inputName, options, &extract)
 	}
 
 	if err != nil {
@@ -118,19 +149,35 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	return nil
 }
 
-func unpackStream(file *os.File, input string, options Options, extract *extractor) error {
+func unpackStream(source io.Reader, file *os.File, size int64, input string, options Options, extract *extractor) error {
 	var (
-		source io.Reader = file
-		codec  io.ReadCloser
-		err    error
+		codec io.ReadCloser
+		err   error
 	)
 
 	switch options.Format.Codec {
 	case native.Gzip, native.Bzip2:
-		codec, err = native.OpenParallel(file.Name(), options.Format.Codec, options.Threads)
+		if file != nil && size >= 1<<20 && options.Threads > 1 {
+			codec, err = native.OpenParallel(file.Name(), options.Format.Codec, min(options.Threads, 16))
+		} else {
+			codec, err = native.NewReader(source, options.Format.Codec, 1)
+		}
 	case 0:
+	case native.Zstd:
+		if file != nil {
+			var seekable *native.SeekableReader
+
+			seekable, err = native.OpenSeekable(file, size, options.Threads)
+			if seekable != nil {
+				codec = seekable
+			}
+		}
+
+		if codec == nil && err == nil {
+			codec, err = native.NewReader(source, native.Zstd, options.Threads)
+		}
 	default:
-		codec, err = native.NewReader(file, options.Format.Codec, options.Threads)
+		codec, err = native.NewReader(source, options.Format.Codec, options.Threads)
 	}
 
 	if err != nil {
@@ -241,7 +288,10 @@ func detectFormat(file *os.File) (Format, error) {
 		return Format{}, err
 	}
 
-	data := header[:count]
+	return detectHeader(header[:count])
+}
+
+func detectHeader(data []byte) (Format, error) {
 	name := ""
 
 	switch {
@@ -259,7 +309,7 @@ func detectFormat(file *os.File) (Format, error) {
 		name = "7z"
 	case bytes.HasPrefix(data, []byte{'P', 'K', 3, 4}), bytes.HasPrefix(data, []byte{'P', 'K', 5, 6}):
 		name = "zip"
-	case count >= 262 && string(data[257:262]) == "ustar":
+	case len(data) >= 262 && string(data[257:262]) == "ustar":
 		name = "tar"
 	default:
 		return Format{}, errors.New("unrecognized archive; specify --format (required for brotli and extensionless compressed tar)")

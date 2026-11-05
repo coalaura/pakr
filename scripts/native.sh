@@ -16,7 +16,7 @@ toolchain="$build/toolchain"
 mkdir -p "$prefix/include" "$prefix/lib" "$build"
 bash "$root/scripts/fetch.sh"
 
-signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/bzip2/CMakeLists.txt" "$root/scripts/patches/"*.patch "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
+signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/bzip2/CMakeLists.txt" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
 signature=$(printf '%s' "$signature" | sha256sum | cut -d ' ' -f 1)
 (cd "$root/tools/toolchain" && go run -buildvcs=false . "$target" "$arch" "$toolchain")
 
@@ -57,15 +57,11 @@ if [[ -f "$prefix/.complete-$signature" ]]; then
 fi
 
 sources="$root/.native/src"
-if [[ ! -f "$sources/libdeflate/.pakr-clang22" ]]; then
-	patch -d "$sources/libdeflate" -p1 <"$root/scripts/patches/libdeflate-clang22.patch"
-	touch "$sources/libdeflate/.pakr-clang22"
-fi
 build_cmake zlib-ng "$sources/zlib-ng" -DZLIB_COMPAT=ON -DZLIB_ENABLE_TESTS=OFF -DZLIBNG_ENABLE_TESTS=OFF
 build_cmake zstd "$sources/zstd/build/cmake" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_MULTITHREAD_SUPPORT=ON
 build_cmake bzip2 "$root/scripts/bzip2" -DSOURCE="$sources/bzip2"
 build_cmake xz "$sources/xz" -DXZ_NLS=OFF -DXZ_TOOL_XZ=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF -DXZ_TOOL_LZMAINFO=OFF -DXZ_DOC=OFF -DXZ_EXTERNAL_SHA256=OFF
-build_cmake lz4 "$sources/lz4/build/cmake" -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF
+build_cmake lz4 "$sources/lz4/build/cmake" -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF -DLZ4_STATIC_MULTITHREAD=ON
 build_cmake brotli "$sources/brotli" -DBROTLI_DISABLE_TESTS=ON
 build_cmake libdeflate "$sources/libdeflate" -DLIBDEFLATE_BUILD_SHARED_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF
 

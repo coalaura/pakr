@@ -68,6 +68,7 @@ const (
 
 type Writer struct {
 	codec  *C.pakr_codec
+	sizes  *[2]C.size_t
 	target io.Writer
 	buffer []byte
 	err    error
@@ -75,6 +76,7 @@ type Writer struct {
 
 type Reader struct {
 	codec     *C.pakr_codec
+	sizes     *[2]C.size_t
 	source    io.Reader
 	buffer    []byte
 	input     []byte
@@ -83,6 +85,11 @@ type Reader struct {
 	threads   int
 	ended     bool
 	sourceErr error
+	single    bool
+}
+
+func (writer *Writer) parameters() (int, int, bool) {
+	return int(C.pakr_codec_parameter(writer.codec, 0)), int(C.pakr_codec_parameter(writer.codec, 1)), C.pakr_codec_parameter(writer.codec, 2) != 0
 }
 
 func (writer *Writer) Write(data []byte) (int, error) {
@@ -99,7 +106,7 @@ func (writer *Writer) Write(data []byte) (int, error) {
 	for len(data) > 0 {
 		chunk := data[:min(len(data), BufferSize)]
 
-		consumed, produced, _, err := step(writer.codec, chunk, writer.buffer, false)
+		consumed, produced, _, err := step(writer.codec, writer.sizes, chunk, writer.buffer, false)
 		written += consumed
 
 		data = data[consumed:]
@@ -143,7 +150,7 @@ func (writer *Writer) Close() error {
 	}
 
 	for {
-		_, produced, ended, err := step(writer.codec, nil, writer.buffer, true)
+		_, produced, ended, err := step(writer.codec, writer.sizes, nil, writer.buffer, true)
 		if err != nil {
 			writer.err = err
 
@@ -208,7 +215,7 @@ func (reader *Reader) Read(data []byte) (int, error) {
 				return 0, reader.err
 			}
 
-			if reader.format == Brotli || reader.format == Deflate || reader.format == XZ {
+			if reader.single || reader.format == Brotli || reader.format == Deflate || reader.format == XZ {
 				reader.err = errors.New("unexpected data after compressed stream")
 
 				return 0, reader.err
@@ -216,7 +223,7 @@ func (reader *Reader) Read(data []byte) (int, error) {
 
 			C.pakr_codec_free(reader.codec)
 
-			codec, err := newCodec(reader.format, false, 3, reader.threads)
+			codec, err := newCodec(reader.format, false, 3, reader.threads, false)
 
 			reader.codec = codec
 			reader.err = err
@@ -227,7 +234,7 @@ func (reader *Reader) Read(data []byte) (int, error) {
 			}
 		}
 
-		consumed, produced, ended, err := step(reader.codec, reader.input, data, errors.Is(reader.sourceErr, io.EOF))
+		consumed, produced, ended, err := step(reader.codec, reader.sizes, reader.input, data, errors.Is(reader.sourceErr, io.EOF))
 
 		reader.input = reader.input[consumed:]
 		reader.ended = ended
@@ -257,46 +264,30 @@ func (reader *Reader) Close() error {
 }
 
 func NewWriter(target io.Writer, format, level, threads int) (*Writer, error) {
-	codec, err := newCodec(format, true, level, threads)
+	return NewWriterExtreme(target, format, level, threads, false)
+}
+
+func NewWriterExtreme(target io.Writer, format, level, threads int, extreme bool) (*Writer, error) {
+	codec, err := newCodec(format, true, level, threads, extreme)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Writer{codec: codec, target: target, buffer: make([]byte, 2*BufferSize)}, nil
+	bound := int(C.pakr_codec_bound(codec, BufferSize))
+
+	return &Writer{codec: codec, sizes: new([2]C.size_t{}), target: target, buffer: make([]byte, bound)}, nil
 }
 
 func NewReader(source io.Reader, format, threads int) (*Reader, error) {
-	codec, err := newCodec(format, false, 3, threads)
+	codec, err := newCodec(format, false, 3, threads, false)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Reader{codec: codec, source: source, buffer: make([]byte, BufferSize), format: format, threads: threads}, nil
+	return &Reader{codec: codec, sizes: new([2]C.size_t{}), source: source, buffer: make([]byte, BufferSize), format: format, threads: threads}, nil
 }
 
-func CompressDeflate(data []byte, level int) ([]byte, error) {
-	bound := C.pakr_deflate_bound(C.size_t(len(data)))
-
-	output := make([]byte, int(bound))
-
-	count := C.pakr_deflate(unsafe.Pointer(unsafe.SliceData(data[:])), C.size_t(len(data)), unsafe.Pointer(&output[0]), bound, C.int(level))
-	if count == 0 {
-		return nil, errors.New("libdeflate compression failed")
-	}
-
-	return output[:int(count)], nil
-}
-
-func DecompressDeflate(data, output []byte) error {
-	result := C.pakr_inflate(unsafe.Pointer(unsafe.SliceData(data[:])), C.size_t(len(data)), unsafe.Pointer(unsafe.SliceData(output[:])), C.size_t(len(output)))
-	if result != 0 {
-		return errors.New("invalid deflate stream or incorrect uncompressed size")
-	}
-
-	return nil
-}
-
-func newCodec(format int, encode bool, level, threads int) (*C.pakr_codec, error) {
+func newCodec(format int, encode bool, level, threads int, extreme bool) (*C.pakr_codec, error) {
 	if level < 1 || level > 9 || threads < 1 {
 		return nil, errors.New("invalid codec level or thread count")
 	}
@@ -307,7 +298,13 @@ func newCodec(format int, encode bool, level, threads int) (*C.pakr_codec, error
 		encoding = 1
 	}
 
-	codec := C.pakr_codec_new(C.int(format), encoding, C.int(level), C.int(threads))
+	extra := C.int(0)
+
+	if extreme {
+		extra = 1
+	}
+
+	codec := C.pakr_codec_new(C.int(format), encoding, C.int(level), C.int(threads), extra)
 	if codec == nil {
 		return nil, errors.New("native codec allocation failed")
 	}
@@ -322,9 +319,10 @@ func newCodec(format int, encode bool, level, threads int) (*C.pakr_codec, error
 	return codec, nil
 }
 
-func step(codec *C.pakr_codec, input, output []byte, finish bool) (int, int, bool, error) {
-	inputSize := C.size_t(len(input))
-	outputSize := C.size_t(len(output))
+func step(codec *C.pakr_codec, sizes *[2]C.size_t, input, output []byte, finish bool) (int, int, bool, error) {
+	// Reuse pointer-free storage: CGO out-parameters otherwise escape on every call.
+	sizes[0] = C.size_t(len(input))
+	sizes[1] = C.size_t(len(output))
 
 	finishing := C.int(0)
 
@@ -333,10 +331,10 @@ func step(codec *C.pakr_codec, input, output []byte, finish bool) (int, int, boo
 	}
 
 	// Explicit slice expressions let CGO check only bytes, including embedded arrays and empty slices.
-	status := C.pakr_codec_step(codec, unsafe.Pointer(unsafe.SliceData(input[:])), &inputSize, unsafe.Pointer(unsafe.SliceData(output[:])), &outputSize, finishing)
+	status := C.pakr_codec_step(codec, unsafe.Pointer(unsafe.SliceData(input[:])), &sizes[0], unsafe.Pointer(unsafe.SliceData(output[:])), &sizes[1], finishing)
 	if status < 0 {
-		return int(inputSize), 0, false, fmt.Errorf("native codec: %s", C.GoString(C.pakr_codec_error(codec)))
+		return int(sizes[0]), 0, false, fmt.Errorf("native codec: %s", C.GoString(C.pakr_codec_error(codec)))
 	}
 
-	return int(inputSize), int(outputSize), status == 1, nil
+	return int(sizes[0]), int(sizes[1]), status == 1, nil
 }

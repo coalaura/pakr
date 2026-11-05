@@ -1,12 +1,12 @@
 # name version sha256 source
-zlib-ng 2.2.4 a73343c3093e5cdc50d9377997c3815b878fd110bf6511c2c7759f2afb90f5a3 https://codeload.github.com/zlib-ng/zlib-ng/tar.gz/refs/tags/2.2.4
+zlib-ng 2.3.3 f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1 https://codeload.github.com/zlib-ng/zlib-ng/tar.gz/refs/tags/2.3.3
 zstd 1.5.7 37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3 https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7
 bzip2 1.0.8 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269 https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
-xz 5.8.1 bdbc23fbf9098843357e71e49685724fda2c320c29cb1b25fd90505f14bb0b3d https://codeload.github.com/tukaani-project/xz/tar.gz/refs/tags/v5.8.1
-lz4 1.10.0 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b https://codeload.github.com/lz4/lz4/tar.gz/refs/tags/v1.10.0
-brotli 1.1.0 e720a6ca29428b803f4ad165371771f5398faba397edf6778837a18599ea13ff https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.1.0
-libarchive 3.8.1 ad5dfe0d9a5999494c445b9bc3271d84160950bb1790cf892fb132f563d036b6 https://codeload.github.com/libarchive/libarchive/tar.gz/refs/tags/v3.8.1
-libdeflate 1.24 ad8d3723d0065c4723ab738be9723f2ff1cb0f1571e8bfcf0301ff9661f475e8 https://codeload.github.com/ebiggers/libdeflate/tar.gz/refs/tags/v1.24
+xz 5.8.4 b6b34c52e672e810d339db14e0c10b5b6f5f67a30d8d05cdac5d8cb4d82f78d5 https://codeload.github.com/tukaani-project/xz/tar.gz/refs/tags/v5.8.4
+lz4 1.11.0 247e5fa64da5f7b75ee3dd3bed484076396c9ebe8254d9ccf693eb62800c5e26 https://codeload.github.com/lz4/lz4/tar.gz/refs/tags/v1.11.0
+brotli 1.2.1 98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.2.1
+libarchive 3.8.11 6e9560b2e0659ff688c5efb7717a68bb06b28ef65a69addcd6c424eaf9c319b1 https://codeload.github.com/libarchive/libarchive/tar.gz/refs/tags/v3.8.11
+libdeflate 1.26 bba03fffc5538576213675ce6968fcff6ce2e67d82e4d5febea2d05f9f13cf85 https://codeload.github.com/ebiggers/libdeflate/tar.gz/refs/tags/v1.26
 # rapidgzip requires its ISA-L fork's block-boundary API; this is its pinned submodule revision.
 isal fb41a9673f23cd965d1f474450ebf80a0d660c8f f861fd68f4b36836d5cd51b9bf040addd8aff60c4bde1a2699586579bf335936 https://codeload.github.com/mxmlnkn/isa-l/tar.gz/fb41a9673f23cd965d1f474450ebf80a0d660c8f
 rapidgzip 0.14.5 8513aa3a3ddfb9c9e9acd4feebf0c2a126fce503b1d0d21d0e548ede645bd80d https://codeload.github.com/mxmlnkn/rapidgzip/tar.gz/refs/tags/rapidgzip-v0.14.5

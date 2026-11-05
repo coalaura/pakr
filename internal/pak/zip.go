@@ -3,11 +3,14 @@ package pak
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
+	"path"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -22,6 +25,91 @@ type zipResult struct {
 	err        error
 }
 
+type zipWorker struct {
+	codec  *native.Deflater
+	input  []byte
+	output []byte
+	jobs   chan *entry
+	done   chan zipResult
+}
+
+type zipDecoder struct {
+	codec      *native.Inflater
+	compressed []byte
+	data       []byte
+}
+
+func (worker *zipWorker) run(copying *copier) {
+	defer worker.codec.Close()
+
+	for item := range worker.jobs {
+		worker.done <- prepareZip(item, worker, copying)
+	}
+}
+
+func (decoder *zipDecoder) extract(file *zip.File, extract *extractor) error {
+	header := zipHeader(file)
+
+	var (
+		reader io.ReadCloser
+		err    error
+	)
+
+	if file.Mode()&os.ModeSymlink != 0 && header.Size > 4096 {
+		return errors.New("symbolic link target exceeds 4096 bytes")
+	}
+
+	if file.Method == zip.Deflate && file.CompressedSize64 <= zipBufferLimit && file.UncompressedSize64 <= zipBufferLimit {
+		var raw io.Reader
+
+		raw, err = file.OpenRaw()
+		if err != nil {
+			return err
+		}
+
+		decoder.compressed = resize(decoder.compressed, int(file.CompressedSize64))
+		decoder.data = resize(decoder.data, int(file.UncompressedSize64))
+
+		_, err = io.ReadFull(raw, decoder.compressed)
+		if err == nil {
+			err = decoder.codec.Decompress(decoder.compressed, decoder.data)
+		}
+
+		if err != nil {
+			return fmt.Errorf("decode zip entry %q: %w", file.Name, err)
+		}
+
+		if crc32.ChecksumIEEE(decoder.data) != file.CRC32 {
+			return zip.ErrChecksum
+		}
+
+		reader = io.NopCloser(bytes.NewReader(decoder.data))
+	} else {
+		reader, err = file.Open()
+		if err != nil {
+			return err
+		}
+	}
+
+	if file.Mode()&os.ModeSymlink != 0 {
+		var target strings.Builder
+
+		_, err = io.Copy(&target, io.LimitReader(reader, 4097))
+		if err == nil && target.Len() > 4096 {
+			err = errors.New("symbolic link target exceeds 4096 bytes")
+		}
+
+		header.Kind = native.Symlink
+		header.Link = target.String()
+	}
+
+	if err == nil {
+		err = extract.entry(header, reader)
+	}
+
+	return closeWithError(reader, err)
+}
+
 func packZip(target io.Writer, entries []entry, options Options, copying *copier) error {
 	archive := zip.NewWriter(target)
 
@@ -29,58 +117,83 @@ func packZip(target io.Writer, entries []entry, options Options, copying *copier
 		return native.NewWriter(target, native.Deflate, options.Level, 1)
 	})
 
-	// A bounded batch limits live libdeflate input/output buffers to roughly 256 MiB.
-	workers := min(options.Threads, 16)
-	results := make([]zipResult, workers)
+	// Slots bound both the reorder window and reusable input/output buffers (~256 MiB).
+	workers := make([]zipWorker, min(options.Threads, 16, len(entries)))
 
-	for offset := 0; offset < len(entries); offset += workers {
-		batch := entries[offset:min(offset+workers, len(entries))]
+	var pending sync.WaitGroup
 
-		var pending sync.WaitGroup
-
-		for index := range batch {
-			pending.Go(func() {
-				results[index] = prepareZip(&batch[index], options.Level, copying)
-			})
+	defer func() {
+		for index := range workers {
+			if workers[index].jobs != nil {
+				close(workers[index].jobs)
+			}
 		}
 
 		pending.Wait()
+	}()
 
-		for index := range batch {
-			result := &results[index]
-			if result.err != nil {
-				return result.err
-			}
+	for index := range workers {
+		worker := &workers[index]
 
-			err := copying.ctx.Err()
-			if err != nil {
-				return err
-			}
-
-			if result.compressed != nil {
-				var writer io.Writer
-
-				writer, err = archive.CreateRaw(result.header)
-				if err == nil {
-					_, err = writer.Write(result.compressed)
-				}
-			} else {
-				var writer io.Writer
-
-				writer, err = archive.CreateHeader(result.header)
-				if err == nil && batch[index].header.Kind == native.Regular {
-					err = copying.file(writer, &batch[index])
-				}
-			}
-
-			result.compressed = nil
-
-			if err != nil {
-				return err
-			}
-
-			copying.progress.File()
+		codec, err := native.NewDeflater(options.Level)
+		if err != nil {
+			return err
 		}
+
+		worker.codec = codec
+		worker.jobs = make(chan *entry, 1)
+		worker.done = make(chan zipResult, 1)
+		worker.jobs <- &entries[index]
+
+		pending.Go(func() {
+			worker.run(copying)
+		})
+	}
+
+	for index := range entries {
+		worker := &workers[index%len(workers)]
+
+		result := <-worker.done
+		if result.err != nil {
+			return result.err
+		}
+
+		err := copying.ctx.Err()
+		if err != nil {
+			return err
+		}
+
+		if result.compressed != nil {
+			var writer io.Writer
+
+			writer, err = archive.CreateRaw(result.header)
+			if err == nil {
+				var count int
+
+				count, err = writer.Write(result.compressed)
+				if err == nil && count != len(result.compressed) {
+					err = io.ErrShortWrite
+				}
+			}
+		} else {
+			var writer io.Writer
+
+			writer, err = archive.CreateHeader(result.header)
+			if err == nil && entries[index].header.Kind == native.Regular {
+				err = copying.file(writer, &entries[index])
+			}
+		}
+
+		if err != nil {
+			return err
+		}
+
+		next := index + len(workers)
+		if next < len(entries) {
+			worker.jobs <- &entries[next]
+		}
+
+		copying.progress.File()
 	}
 
 	copying.progress.Phase("finish", -1)
@@ -88,8 +201,8 @@ func packZip(target io.Writer, entries []entry, options Options, copying *copier
 	return archive.Close()
 }
 
-func prepareZip(item *entry, level int, copying *copier) zipResult {
-	// zip.Writer retains header pointers until Close; batch slots may be reused before then.
+func prepareZip(item *entry, worker *zipWorker, copying *copier) zipResult {
+	// zip.Writer retains header pointers until Close; worker slots may be reused before then.
 	header := &zip.FileHeader{Name: item.header.Name, Method: zip.Deflate, Modified: item.header.Modified}
 	header.SetMode(os.FileMode(item.header.Mode))
 
@@ -122,7 +235,8 @@ func prepareZip(item *entry, level int, copying *copier) zipResult {
 		}
 
 		// One spare byte detects growth without ReadAll's repeated buffer expansion.
-		data = make([]byte, int(item.header.Size)+1)
+		worker.input = resize(worker.input, int(item.header.Size)+1)
+		data = worker.input
 
 		count, readErr := io.ReadFull(file, data)
 
@@ -143,10 +257,12 @@ func prepareZip(item *entry, level int, copying *copier) zipResult {
 		}
 	}
 
-	compressed, err := native.CompressDeflate(data, level)
+	compressed, err := worker.codec.Compress(worker.output, data)
 	if err != nil {
 		return zipResult{err: err}
 	}
+
+	worker.output = compressed
 
 	header.UncompressedSize64 = uint64(len(data))
 	header.CompressedSize64 = uint64(len(compressed))
@@ -159,7 +275,7 @@ func prepareZip(item *entry, level int, copying *copier) zipResult {
 	return zipResult{header: header, compressed: compressed}
 }
 
-func unpackZip(source io.ReaderAt, size int64, extract *extractor) error {
+func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) error {
 	archive, err := zip.NewReader(source, size)
 	if err != nil {
 		return err
@@ -174,86 +290,143 @@ func unpackZip(source io.ReaderAt, size int64, extract *extractor) error {
 		return reader
 	})
 
+	err = validateZipPaths(archive.File)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(extract.copying.ctx)
+	defer cancel()
+
+	jobs := make(chan *zip.File)
+
 	var (
-		compressed []byte
-		data       []byte
+		pending sync.WaitGroup
+		first   sync.Once
+		failure error
 	)
 
+	for range min(threads, 16, max(1, len(archive.File))) {
+		pending.Go(func() {
+			codec, workerErr := native.NewInflater()
+			if workerErr != nil {
+				first.Do(func() {
+					failure = workerErr
+					cancel()
+				})
+
+				return
+			}
+
+			defer codec.Close()
+
+			decoder := zipDecoder{codec: codec}
+			copying := copier{ctx: ctx, progress: extract.copying.progress, buffer: make([]byte, native.BufferSize)}
+			worker := extractor{root: extract.root, copying: &copying}
+
+			for file := range jobs {
+				workerErr = decoder.extract(file, &worker)
+				if workerErr != nil {
+					first.Do(func() {
+						failure = workerErr
+						cancel()
+					})
+
+					return
+				}
+			}
+		})
+	}
+
+	// Directory metadata is collected by the caller; links are deferred until workers exit.
 	for _, file := range archive.File {
-		if file.Flags&1 != 0 {
-			return fmt.Errorf("encrypted zip entries are not supported: %s", file.Name)
-		}
-
-		header := native.Header{Name: file.Name, Size: int64(file.UncompressedSize64), Mode: uint32(file.Mode().Perm()), Modified: file.Modified}
-
-		if file.UncompressedSize64 > uint64(^uint64(0)>>1) {
-			return fmt.Errorf("zip entry too large: %s", file.Name)
-		}
-
 		if file.FileInfo().IsDir() {
+			header := zipHeader(file)
 			header.Kind = native.Directory
 
 			err = extract.entry(header, nil)
 			if err != nil {
-				return err
+				cancel()
+
+				break
 			}
-
-			continue
-		}
-
-		var reader io.ReadCloser
-
-		if file.Method == zip.Deflate && file.CompressedSize64 <= zipBufferLimit && file.UncompressedSize64 <= zipBufferLimit {
-			var raw io.Reader
-
-			raw, err = file.OpenRaw()
-			if err != nil {
-				return err
-			}
-
-			compressed = resize(compressed, int(file.CompressedSize64))
-			data = resize(data, int(file.UncompressedSize64))
-
-			_, err = io.ReadFull(raw, compressed)
-			if err == nil {
-				err = native.DecompressDeflate(compressed, data)
-			}
-
-			if err != nil {
-				return fmt.Errorf("decode zip entry %q: %w", file.Name, err)
-			}
-
-			if crc32.ChecksumIEEE(data) != file.CRC32 {
-				return zip.ErrChecksum
-			}
-
-			reader = io.NopCloser(bytes.NewReader(data))
-		} else {
-			reader, err = file.Open()
-			if err != nil {
-				return err
+		} else if file.Mode()&os.ModeSymlink == 0 {
+			select {
+			case jobs <- file:
+			case <-ctx.Done():
 			}
 		}
 
+		if ctx.Err() != nil {
+			break
+		}
+	}
+
+	close(jobs)
+	pending.Wait()
+
+	if err != nil || failure != nil {
+		return errors.Join(err, failure)
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	codec, err := native.NewInflater()
+	if err != nil {
+		return err
+	}
+
+	defer codec.Close()
+
+	decoder := zipDecoder{codec: codec}
+
+	for _, file := range archive.File {
 		if file.Mode()&os.ModeSymlink != 0 {
-			var target strings.Builder
-
-			_, err = io.Copy(&target, io.LimitReader(reader, 4097))
-			if err == nil && target.Len() > 4096 {
-				err = errors.New("symbolic link target exceeds 4096 bytes")
+			err = decoder.extract(file, extract)
+			if err != nil {
+				return err
 			}
+		}
+	}
 
-			header.Kind = native.Symlink
-			header.Link = target.String()
+	return nil
+}
+
+func zipHeader(file *zip.File) native.Header {
+	return native.Header{Name: file.Name, Size: int64(file.UncompressedSize64), Mode: uint32(file.Mode().Perm()), Modified: file.Modified}
+}
+
+func validateZipPaths(files []*zip.File) error {
+	paths := make(map[string]bool, len(files))
+
+	for _, file := range files {
+		if file.Flags&1 != 0 || file.UncompressedSize64 > uint64(^uint64(0)>>1) {
+			return fmt.Errorf("encrypted or oversized zip entry: %s", file.Name)
 		}
 
-		if err == nil {
-			err = extract.entry(header, reader)
-		}
-
-		err = closeWithError(reader, err)
+		name, err := cleanName(file.Name)
 		if err != nil {
 			return err
+		}
+
+		if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+			name = strings.ToLower(name)
+		}
+
+		if _, exists := paths[name]; exists {
+			return fmt.Errorf("duplicate zip path: %q", file.Name)
+		}
+
+		paths[name] = file.FileInfo().IsDir()
+	}
+
+	for name := range paths {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			if directory, exists := paths[parent]; exists && !directory {
+				return fmt.Errorf("conflicting zip path: %q", name)
+			}
 		}
 	}
 

@@ -95,9 +95,10 @@ func flags(packing bool) []cli.Flag {
 	}
 
 	if packing {
-		result = append(result, &cli.IntFlag{Name: "level", Aliases: []string{"l"}, Value: 3, Usage: "compression effort from 1 (fastest) to 9 (smallest)"})
+		result = append(result, &cli.IntFlag{Name: "level", Aliases: []string{"l"}, Value: 3, Usage: "codec-specific effort: 1 (fastest), 3 (balanced), 9 (native maximum)"})
 		result = append(result, &cli.StringFlag{Name: "preset", Aliases: []string{"p"}, Usage: "fast, balanced, or best (alternative to --level)"})
-		result = append(result, &cli.BoolFlag{Name: "max", Usage: "maximum effort: --threads all and --level 9; explicit settings override"})
+		result = append(result, &cli.BoolFlag{Name: "max", Usage: "maximum practical effort, XZ extreme, and all CPUs within memory budgets; explicit settings override"})
+		result = append(result, &cli.BoolFlag{Name: "seekable", Usage: "write independent ZSTD frames and the standard seek table (zst/tar.zst only)"})
 	}
 
 	return result
@@ -190,6 +191,7 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 
 	if packing {
 		options.Level = command.Int("level")
+		options.Seekable = command.Bool("seekable")
 
 		preset := command.String("preset")
 		if preset != "" && command.IsSet("level") {
@@ -198,6 +200,7 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 
 		if maximum && !command.IsSet("level") && preset == "" {
 			options.Level = 9
+			options.Extreme = true
 		}
 
 		switch preset {

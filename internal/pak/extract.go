@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"slices"
@@ -79,6 +80,10 @@ func (extract *extractor) file(name string, header native.Header, source io.Read
 	file, err := extract.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
+	}
+
+	if header.Size >= 0 && header.Size < math.MaxInt64 {
+		source = io.LimitReader(source, header.Size+1)
 	}
 
 	count, err := extract.copying.copy(file, source)

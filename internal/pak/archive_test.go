@@ -136,3 +136,67 @@ func TestRejectEscapingPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamingStdin(t *testing.T) {
+	base := t.TempDir()
+	source := filepath.Join(base, "input")
+
+	data := bytes.Repeat([]byte("stream without a temporary file\n"), 100)
+
+	err := os.WriteFile(source, data, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := []string{"gz", "zst", "bz2", "xz", "lz4", "br", "tar.zst"}
+
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			format, err := ParseFormat(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var encoded bytes.Buffer
+
+			options := Options{Format: format, Output: "-", Threads: 4, Level: 3}
+
+			err = Pack(context.Background(), []string{source}, options, &encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			missing := filepath.Join(base, "missing-temp-directory")
+
+			t.Setenv("TMPDIR", missing)
+			t.Setenv("TMP", missing)
+			t.Setenv("TEMP", missing)
+
+			options.Output = filepath.Join(base, name)
+
+			if name != "br" && name != "tar.zst" {
+				options.Format = Format{}
+			}
+
+			err = Unpack(context.Background(), "-", options, &encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			filename := "stdin"
+
+			if name == "tar.zst" {
+				filename = "input"
+			}
+
+			actual, err := os.ReadFile(filepath.Join(options.Output, filename))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !bytes.Equal(actual, data) {
+				t.Fatal("streamed contents mismatch")
+			}
+		})
+	}
+}

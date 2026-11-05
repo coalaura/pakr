@@ -18,11 +18,17 @@ type Options struct {
 	Output   string
 	Threads  int
 	Level    int
+	Extreme  bool
+	Seekable bool
 	Log      *minimal.Minimal
 	Progress io.Writer
 }
 
 func Pack(ctx context.Context, inputs []string, options Options, stdout io.Writer) error {
+	if options.Seekable && options.Format.Codec != native.Zstd {
+		return errors.New("--seekable requires zst or tar.zst")
+	}
+
 	if len(inputs) == 0 {
 		return errors.New("provide at least one file or directory to pack")
 	}
@@ -182,10 +188,14 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 	)
 
 	if options.Format.Codec != 0 {
-		if options.Format.Codec == native.Gzip {
+		if options.Seekable {
+			codec, err = native.NewSeekableWriter(target, options.Level, options.Threads)
+		} else if options.Format.Codec == native.Gzip {
 			codec, err = native.NewGzipWriter(target, options.Level, options.Threads)
+		} else if options.Format.Codec == native.Bzip2 && options.Threads > 1 {
+			codec, err = native.NewBzip2Writer(target, options.Level, options.Threads)
 		} else {
-			codec, err = native.NewWriter(target, options.Format.Codec, options.Level, options.Threads)
+			codec, err = native.NewWriterExtreme(target, options.Format.Codec, options.Level, options.Threads, options.Extreme)
 		}
 
 		if err != nil {

@@ -178,6 +178,49 @@ func TestReferenceArchives(t *testing.T) {
 	}
 }
 
+func TestReferenceSeekable(t *testing.T) {
+	base := t.TempDir()
+	input := filepath.Join(base, "input")
+
+	data := bytes.Repeat([]byte("seekable zstd interoperability\n"), 600000)
+
+	err := os.WriteFile(input, data, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	format, err := ParseFormat("zst")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(base, "archive.zst")
+
+	options := Options{Format: format, Output: archive, Threads: 4, Level: 3, Seekable: true}
+
+	err = Pack(t.Context(), []string{input}, options, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoded, err := exec.CommandContext(t.Context(), "zstd", "-d", "-c", archive).Output()
+	if err != nil || !bytes.Equal(decoded, data) {
+		t.Fatalf("reference seekable decode: %v", err)
+	}
+
+	options.Output = filepath.Join(base, "output")
+
+	err = Unpack(t.Context(), archive, options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoded, err = os.ReadFile(filepath.Join(options.Output, "archive"))
+	if err != nil || !bytes.Equal(decoded, data) {
+		t.Fatalf("parallel seekable extraction: %v", err)
+	}
+}
+
 func verifyArchiveContents(t *testing.T, directory string, expected []byte) {
 	t.Helper()
 

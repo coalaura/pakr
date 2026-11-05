@@ -227,6 +227,10 @@ func (archive *Archive) failure() error {
 }
 
 func OpenArchive(path string, writing bool, level, threads int) (*Archive, error) {
+	if level < 1 || level > 9 || threads < 1 {
+		return nil, errors.New("invalid archive level or thread count")
+	}
+
 	if !archiveLocaleAvailable {
 		return nil, errors.New("a UTF-8 C locale is required for 7z archives")
 	}
@@ -248,7 +252,7 @@ func OpenArchive(path string, writing bool, level, threads int) (*Archive, error
 	if writing {
 		status = C.archive_write_set_format_7zip(archive.archive)
 		if status == C.ARCHIVE_OK {
-			options := C.CString("7zip:compression=lzma2,7zip:compression-level=" + strconv.Itoa(level) + ",7zip:threads=" + strconv.Itoa(threads))
+			options := C.CString("7zip:compression=lzma2,7zip:compression-level=" + strconv.Itoa(NativeLevel(SevenZip, level)) + ",7zip:threads=" + strconv.Itoa(threads))
 
 			status = C.archive_write_set_options(archive.archive, options)
 

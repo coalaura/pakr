@@ -22,6 +22,7 @@ type commandOptionsCase struct {
 	arguments []string
 	threads   int
 	level     int
+	extreme   bool
 }
 
 type commandFailureCase struct {
@@ -124,12 +125,12 @@ func TestCommandOptions(t *testing.T) {
 		{name: "unpack-default", arguments: []string{"unpack"}, threads: autoThreads, level: 3},
 		{name: "pack-all", arguments: []string{"pack", "--threads", "all"}, threads: allThreads, level: 3},
 		{name: "unpack-all", arguments: []string{"unpack", "-t", "all"}, threads: allThreads, level: 3},
-		{name: "max", arguments: []string{"pack", "--max"}, threads: allThreads, level: 9},
+		{name: "max", arguments: []string{"pack", "--max"}, threads: allThreads, level: 9, extreme: true},
 		{name: "max-disabled", arguments: []string{"pack", "--max=false"}, threads: autoThreads, level: 3},
-		{name: "max-threads-after", arguments: []string{"pack", "--max", "--threads", "4"}, threads: 4, level: 9},
-		{name: "max-threads-before", arguments: []string{"pack", "-t", "4", "--max"}, threads: 4, level: 9},
-		{name: "max-auto-after", arguments: []string{"pack", "--max", "--threads", "auto"}, threads: autoThreads, level: 9},
-		{name: "max-auto-before", arguments: []string{"pack", "-t", "auto", "--max"}, threads: autoThreads, level: 9},
+		{name: "max-threads-after", arguments: []string{"pack", "--max", "--threads", "4"}, threads: 4, level: 9, extreme: true},
+		{name: "max-threads-before", arguments: []string{"pack", "-t", "4", "--max"}, threads: 4, level: 9, extreme: true},
+		{name: "max-auto-after", arguments: []string{"pack", "--max", "--threads", "auto"}, threads: autoThreads, level: 9, extreme: true},
+		{name: "max-auto-before", arguments: []string{"pack", "-t", "auto", "--max"}, threads: autoThreads, level: 9, extreme: true},
 		{name: "max-level-after", arguments: []string{"pack", "--max", "--level", "5"}, threads: allThreads, level: 5},
 		{name: "max-level-before", arguments: []string{"pack", "-l", "5", "--max"}, threads: allThreads, level: 5},
 		{name: "max-default-level-after", arguments: []string{"pack", "--max", "--level", "3"}, threads: allThreads, level: 3},
@@ -161,6 +162,10 @@ func TestCommandOptions(t *testing.T) {
 
 					if options.Threads != scenario.threads || options.Level != scenario.level {
 						t.Fatalf("got threads=%d level=%d, want threads=%d level=%d", options.Threads, options.Level, scenario.threads, scenario.level)
+					}
+
+					if options.Extreme != scenario.extreme {
+						t.Fatalf("got extreme=%t, want %t", options.Extreme, scenario.extreme)
 					}
 
 					return nil

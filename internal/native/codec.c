@@ -1,12 +1,16 @@
 #include "codec.h"
+#include "levels.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <zlib.h>
+#define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
 #include <bzlib.h>
 #include <lzma.h>
+#define LZ4F_STATIC_LINKING_ONLY
 #include <lz4frame.h>
+#include <lz4hc.h>
 #include <brotli/encode.h>
 #include <brotli/decode.h>
 #include <libdeflate.h>
@@ -16,6 +20,9 @@ struct pakr_codec {
 	int encode;
 	int started;
 	int initialized;
+	int level;
+	int threads;
+	int extreme;
 	char error[160];
 	z_stream zlib;
 	bz_stream bzip;
@@ -34,13 +41,17 @@ static int fail(pakr_codec *codec, const char *message) {
 	return -1;
 }
 
-pakr_codec *pakr_codec_new(int format, int encode, int level, int threads) {
+pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int extreme) {
 	pakr_codec *codec = calloc(1, sizeof(*codec));
 	if (!codec) {
 		return NULL;
 	}
 	codec->format = format;
 	codec->encode = encode;
+	level = pakr_level(format, level);
+	codec->level = level;
+	codec->threads = 1;
+	codec->extreme = format == 4 && extreme;
 	int result = 0;
 	switch (format) {
 	case 1:
@@ -56,13 +67,19 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads) {
 		if (encode) {
 			codec->zstd_encoder = ZSTD_createCCtx();
 			if (!codec->zstd_encoder) { result = -1; break; }
-			static const int levels[] = {0, 1, 2, 3, 5, 7, 9, 12, 16, 19};
-			if (ZSTD_isError(ZSTD_CCtx_setParameter(codec->zstd_encoder, ZSTD_c_compressionLevel, levels[level])) || ZSTD_isError(ZSTD_CCtx_setParameter(codec->zstd_encoder, ZSTD_c_checksumFlag, 1)) || ZSTD_isError(ZSTD_CCtx_setParameter(codec->zstd_encoder, ZSTD_c_nbWorkers, threads > 1 ? threads : 0))) {
+			ZSTD_compressionParameters parameters = ZSTD_getCParams(level, 0, 0);
+			/* Account for match tables, job input/output, and overlap before enabling workers. */
+			uint64_t per_worker = ZSTD_estimateCCtxSize_usingCParams(parameters) + (UINT64_C(6) << parameters.windowLog);
+			uint64_t budget = UINT64_C(2) << 30;
+			while (threads > 1 && per_worker > budget / threads) --threads;
+			codec->threads = threads;
+			if (ZSTD_isError(ZSTD_CCtx_setParameter(codec->zstd_encoder, ZSTD_c_compressionLevel, level)) || ZSTD_isError(ZSTD_CCtx_setParameter(codec->zstd_encoder, ZSTD_c_checksumFlag, 1)) || ZSTD_isError(ZSTD_CCtx_setParameter(codec->zstd_encoder, ZSTD_c_nbWorkers, threads > 1 ? threads : 0))) {
 				result = -1;
 			}
 		} else {
 			codec->zstd_decoder = ZSTD_createDCtx();
 			result = codec->zstd_decoder ? 0 : -1;
+			if (codec->zstd_decoder && ZSTD_isError(ZSTD_DCtx_setParameter(codec->zstd_decoder, ZSTD_d_windowLogMax, 30))) result = -1;
 		}
 		break;
 	case 3:
@@ -73,8 +90,10 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads) {
 		if (encode) {
 			lzma_mt options = {0};
 			options.threads = threads;
-			options.preset = level;
+			options.preset = level | (extreme ? LZMA_PRESET_EXTREME : 0);
 			options.check = LZMA_CHECK_CRC64;
+			while (options.threads > 1 && lzma_stream_encoder_mt_memusage(&options) > (UINT64_C(2) << 30)) --options.threads;
+			codec->threads = options.threads;
 			result = lzma_stream_encoder_mt(&codec->xz, &options);
 		} else {
 			lzma_mt options = {0};
@@ -92,7 +111,11 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads) {
 			result = LZ4F_isError(LZ4F_createCompressionContext(&codec->lz4_encoder, LZ4F_VERSION));
 			codec->lz4_preferences.frameInfo.contentChecksumFlag = LZ4F_contentChecksumEnabled;
 			codec->lz4_preferences.frameInfo.blockSizeID = LZ4F_max256KB;
-			codec->lz4_preferences.compressionLevel = level <= 3 ? 0 : level + 3;
+			codec->lz4_preferences.compressionLevel = level;
+			/* Each worker can retain two jobs, with both input and output buffers. */
+			int limit = (256U << 20) / ((4U << 20) + LZ4_sizeofStateHC());
+			if ((unsigned)limit > LZ4F_getMaxNbWorkers()) limit = LZ4F_getMaxNbWorkers();
+			codec->lz4_preferences.nbWorkers = threads > 1 ? (threads > limit ? limit : threads) : 0;
 		} else {
 			result = LZ4F_isError(LZ4F_createDecompressionContext(&codec->lz4_decoder, LZ4F_VERSION));
 		}
@@ -100,7 +123,7 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads) {
 	case 6:
 		if (encode) {
 			codec->brotli_encoder = BrotliEncoderCreateInstance(NULL, NULL, NULL);
-			result = codec->brotli_encoder && BrotliEncoderSetParameter(codec->brotli_encoder, BROTLI_PARAM_QUALITY, level == 9 ? 11 : level) ? 0 : -1;
+			result = codec->brotli_encoder && BrotliEncoderSetParameter(codec->brotli_encoder, BROTLI_PARAM_QUALITY, level) ? 0 : -1;
 		} else {
 			codec->brotli_decoder = BrotliDecoderCreateInstance(NULL, NULL, NULL);
 			result = codec->brotli_decoder ? 0 : -1;
@@ -117,6 +140,22 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads) {
 
 const char *pakr_codec_error(pakr_codec *codec) {
 	return codec->error;
+}
+
+size_t pakr_codec_bound(pakr_codec *codec, size_t input_size) {
+	if (codec->format == 5) return LZ4F_compressBound(input_size, &codec->lz4_preferences);
+	return 2 * input_size;
+}
+
+int pakr_codec_parameter(pakr_codec *codec, int parameter) {
+	if (parameter == 2) return codec->extreme;
+	if (codec->zstd_encoder) {
+		int value = 0;
+		ZSTD_CCtx_getParameter(codec->zstd_encoder, parameter ? ZSTD_c_nbWorkers : ZSTD_c_compressionLevel, &value);
+		return value;
+	}
+	if (codec->lz4_encoder) return parameter ? codec->lz4_preferences.nbWorkers : codec->lz4_preferences.compressionLevel;
+	return parameter ? codec->threads : codec->level;
 }
 
 int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, void *output, size_t *output_size, int finish) {
@@ -184,6 +223,13 @@ int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, vo
 			if (result == 0) { status = 1; }
 		} else if (!codec->started) {
 			result = LZ4F_compressBegin(codec->lz4_encoder, output, available_output, &codec->lz4_preferences);
+			if (LZ4F_isError(result) && codec->lz4_preferences.nbWorkers) {
+				LZ4F_freeCompressionContext(codec->lz4_encoder);
+				codec->lz4_encoder = NULL;
+				codec->lz4_preferences.nbWorkers = 0;
+				result = LZ4F_createCompressionContext(&codec->lz4_encoder, LZ4F_VERSION);
+				if (!LZ4F_isError(result)) result = LZ4F_compressBegin(codec->lz4_encoder, output, available_output, &codec->lz4_preferences);
+			}
 			*input_size = 0;
 			*output_size = result;
 			codec->started = 1;
@@ -193,7 +239,7 @@ int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, vo
 		} else if (finish) {
 			result = LZ4F_compressEnd(codec->lz4_encoder, output, available_output, NULL);
 			*output_size = result;
-			status = 1;
+			status = result < available_output;
 		} else {
 			result = 0;
 			*output_size = 0;
@@ -242,24 +288,4 @@ void pakr_codec_free(pakr_codec *codec) {
 	BrotliEncoderDestroyInstance(codec->brotli_encoder);
 	BrotliDecoderDestroyInstance(codec->brotli_decoder);
 	free(codec);
-}
-
-size_t pakr_deflate_bound(size_t size) {
-	return libdeflate_deflate_compress_bound(NULL, size);
-}
-
-size_t pakr_deflate(const void *input, size_t size, void *output, size_t capacity, int level) {
-	struct libdeflate_compressor *compressor = libdeflate_alloc_compressor(level);
-	if (!compressor) { return 0; }
-	size_t written = libdeflate_deflate_compress(compressor, input, size, output, capacity);
-	libdeflate_free_compressor(compressor);
-	return written;
-}
-
-int pakr_inflate(const void *input, size_t size, void *output, size_t capacity) {
-	struct libdeflate_decompressor *decompressor = libdeflate_alloc_decompressor();
-	if (!decompressor) { return -1; }
-	int result = libdeflate_deflate_decompress(decompressor, input, size, output, capacity, NULL);
-	libdeflate_free_decompressor(decompressor);
-	return result;
 }

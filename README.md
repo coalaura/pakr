@@ -49,7 +49,7 @@ Raw compression formats such as `gz` accept exactly one regular file. Use a cont
 
 `pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable magic bytes. Specify `-f` for Brotli without an extension or compressed tar from stdin or a file without a recognized extension.
 
-Stdin is spooled to a temporary file for seekable decoders. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
+Stdin is streamed directly for sequential formats; only ZIP and 7z require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
 
 ### Options
 
@@ -62,7 +62,8 @@ Flags may follow input paths.
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
 | `-l`, `--level` | Compression effort: 1-9, default 3; packing only |
 | `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
-| `--max` | Maximum effort: `--threads all --level 9`; explicit `--threads`, `--level` or `--preset` settings override regardless of argument order; packing only |
+| `--max` | Maximum practical effort: all logical CPUs within codec resource budgets, level 9 and XZ's extreme preset; explicit `--threads`, `--level` or `--preset` settings override their respective defaults regardless of argument order; packing only |
+| `--seekable` | Opt-in official seekable Zstandard output for `zst` and `tar.zst`; packing only |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -74,18 +75,36 @@ Flags may follow input paths.
 | Format | Compression | Decompression |
 | --- | --- | --- |
 | `tar` | Go `archive/tar` | Go `archive/tar` |
-| `gz`, `gzip` | ISA-L at levels 1-3; zlib-ng at levels 4-9 | rapidgzip with its ISA-L fork |
+| `gz`, `gzip` | ISA-L at levels 1-4; zlib-ng at levels 5-9 | zlib-ng for small/piped streams; rapidgzip for large files |
 | `zst`, `zstd` | libzstd | libzstd |
-| `bz2`, `bzip2` | libbz2 | indexed_bzip2 |
+| `bz2`, `bzip2` | libbz2, parallel concatenated streams | libbz2 for small/piped streams; indexed_bzip2 for large files |
 | `xz`, `lzma2` | liblzma, XZ container | liblzma |
 | `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng |
-| `lz4` | liblz4 frame API | liblz4 frame API |
+| `lz4` | liblz4 multithreaded frame API | liblz4 frame API |
 | `7z` | libarchive with LZMA2 | libarchive |
 | `br`, `brotli` | libbrotlienc | libbrotlidec |
 
 Every raw codec can be combined with tar: `tar.gz`, `tar.zst`, `tar.bz2`, `tar.xz`, `tar.lz4` and `tar.br`. Aliases include `tgz`, `tbz`, `tbz2`, `txz` and `tzst`. `lzma2` selects an XZ container, not a headerless LZMA2 stream or legacy `.lzma` file.
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded. Gzip uses parallel, independent 1 MiB members in a standard concatenated stream. Gzip and ZIP compression cap in-flight workers at 16 to bound buffering.
+
+The public levels 1 through 9 select these native settings (3 remains the balanced default):
+
+| Backend | Native settings for public levels 1, 2, 3, 4, 5, 6, 7, 8, 9 |
+| --- | --- |
+| Zstandard | -3, 1, 3, 6, 9, 12, 16, 19, maximum (currently 22) |
+| Brotli | 0, 1, 3, 4, 5, 6, 8, 10, 11 |
+| ZIP libdeflate | 1, 2, 3, 4, 5, 7, 9, 10, 12 |
+| LZ4 | -4, -1, 0, 3, 5, 7, 9, 10, maximum HC (currently 12) |
+| GZIP | ISA-L 0, 1, 2, 3; then zlib-ng 5, 6, 7, 8, 9 |
+| BZIP2 / streaming ZIP DEFLATE | 1, 2, 3, 4, 5, 6, 7, 8, 9 |
+| XZ / 7z LZMA2 | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
+
+Zero and negative settings in this table still compress; they do not select store mode. Zstandard -3 and LZ4 acceleration 5 (frame level -4) are practical fast endpoints, rather than their much broader acceleration limits. Explicit `--level 9` or `--preset best` overrides `--max`'s XZ extreme setting. Libarchive's LZMA2 writer and Brotli are single-threaded.
+
+ZIP entries up to 8 MiB use reusable libdeflate contexts; larger entries stream through zlib-ng. ZIP extraction validates conflicting paths before dispatching independent files and creates symlinks after file workers finish. Zstandard and XZ reduce native encoder worker counts using a 2 GiB memory estimate; BZIP2 and LZ4 bound worker buffers/state to approximately 256 MiB. These are codec working-memory budgets, not whole-process RSS guarantees; archive metadata, parallel decoder indexes and libarchive's 7z decoder are outside these budgets. XZ decoding permits up to 2 GiB and reduces parallelism above 512 MiB; ordinary Zstandard decoding limits windows to 1 GiB.
+
+`--seekable` writes independent 8 MiB Zstandard frames followed by the official seek table. Ordinary Zstandard tools can decode the result. Pakr detects the table in files and decodes frames with up to eight bounded workers; piped input still decodes sequentially. The writer spools only the seek index to a temporary file. External frames larger than 16 MiB use sequential streaming to avoid unbounded frame buffers. Independent frames can reduce compression ratio, so ordinary Zstandard output remains the default.
 
 ## Status output
 

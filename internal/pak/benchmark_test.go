@@ -77,7 +77,8 @@ func benchmarkPack(b *testing.B, name, directory, source string, size int64) {
 		}
 
 		if name == "native-tar" {
-			command := exec.CommandContext(context.Background(), "tar", "-cf", output, "-C", directory, "source")
+			command := exec.CommandContext(context.Background(), "tar", "-cf", "archive", "source")
+			command.Dir = directory
 
 			err = command.Run()
 		} else {

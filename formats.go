@@ -19,6 +19,8 @@ Default: tar.zst. Fastest compression: tar.lz4. Broad desktop compatibility: zip
 Raw codecs take one file; use tar.<codec> for multiple files or folders.
 
 Speeds assume level 3; higher levels can be much slower. Ratings are qualitative and vary with input, threads and hardware.
+Level 9 reaches each backend's standard maximum; --max also enables XZ extreme within resource budgets.
+Use --seekable with zst or tar.zst for independent frames and parallel file extraction.
 `
 
 func showFormats(writer io.Writer) error {

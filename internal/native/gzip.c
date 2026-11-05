@@ -1,4 +1,5 @@
 #include "gzip.h"
+#include "levels.h"
 #include <igzip_lib.h>
 #include <stdlib.h>
 #include <zlib.h>
@@ -14,13 +15,13 @@ pakr_gzip *pakr_gzip_new(int level) {
 	pakr_gzip *codec = calloc(1, sizeof(*codec));
 	if (!codec) return NULL;
 	codec->level = level;
-	if (level <= 3) {
-		codec->scratch = malloc(ISAL_DEF_LVL2_DEFAULT);
+	if (level <= 4) {
+		codec->scratch = malloc(ISAL_DEF_LVL3_DEFAULT);
 		if (!codec->scratch) {
 			free(codec);
 			return NULL;
 		}
-	} else if (deflateInit2(&codec->zlib, level, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+	} else if (deflateInit2(&codec->zlib, pakr_level(1, level), Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
 		free(codec);
 		return NULL;
 	}
@@ -28,11 +29,11 @@ pakr_gzip *pakr_gzip_new(int level) {
 }
 
 size_t pakr_gzip_compress(pakr_gzip *codec, const void *input, size_t size, void *output, size_t capacity) {
-	if (codec->level <= 3) {
+	if (codec->level <= 4) {
 		isal_deflate_stateless_init(&codec->isal);
-		codec->isal.level = codec->level - 1;
+		codec->isal.level = pakr_level(10, codec->level);
 		codec->isal.level_buf = codec->scratch;
-		codec->isal.level_buf_size = ISAL_DEF_LVL2_DEFAULT;
+		codec->isal.level_buf_size = ISAL_DEF_LVL3_DEFAULT;
 		codec->isal.gzip_flag = IGZIP_GZIP;
 		codec->isal.end_of_stream = 1;
 		codec->isal.next_in = (void *)input;
@@ -57,7 +58,7 @@ size_t pakr_gzip_compress(pakr_gzip *codec, const void *input, size_t size, void
 
 void pakr_gzip_free(pakr_gzip *codec) {
 	if (!codec) return;
-	if (codec->level > 3) deflateEnd(&codec->zlib);
+	if (codec->level > 4) deflateEnd(&codec->zlib);
 	free(codec->scratch);
 	free(codec);
 }
