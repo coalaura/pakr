@@ -176,6 +176,9 @@ func TestCommandOptions(t *testing.T) {
 	cases := []commandOptionsCase{
 		{name: "pack-default", arguments: []string{"pack"}, threads: autoThreads, level: 3},
 		{name: "unpack-default", arguments: []string{"unpack"}, threads: autoThreads, level: 3},
+		{name: "pack-memory-auto", arguments: []string{"pack", "--memory", "auto"}, threads: autoThreads, level: 3},
+		{name: "unpack-memory-auto", arguments: []string{"unpack", "--memory", "auto"}, threads: autoThreads, level: 3},
+		{name: "explicit-memory", arguments: []string{"pack", "--memory", "2GiB"}, threads: autoThreads, level: 3, memory: 2 << 30},
 		{name: "pack-all", arguments: []string{"pack", "--threads", "all"}, threads: allThreads, level: 3},
 		{name: "unpack-all", arguments: []string{"unpack", "-t", "all"}, threads: allThreads, level: 3},
 		{name: "max", arguments: []string{"pack", "--max"}, threads: allThreads, level: 9, extreme: true},
@@ -223,13 +226,8 @@ func TestCommandOptions(t *testing.T) {
 						t.Fatalf("got extreme=%t, want %t", options.Extreme, scenario.extreme)
 					}
 
-					memory := scenario.memory
-					if memory == 0 {
-						memory = 2 << 30
-					}
-
-					if options.Memory != memory {
-						t.Fatalf("got codec memory=%d, want %d", options.Memory, memory)
+					if options.Memory != scenario.memory {
+						t.Fatalf("got codec memory=%d, want %d", options.Memory, scenario.memory)
 					}
 
 					return nil

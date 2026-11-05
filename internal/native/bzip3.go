@@ -18,11 +18,14 @@ import (
 	"io"
 	"sync"
 	"unsafe"
+
+	"github.com/coalaura/pakr/internal/membudget"
 )
 
 const (
-	Bzip3              = 8
-	DefaultBzip3Memory = 2 << 30
+	Bzip3 = 8
+	// DefaultBzip3Memory requests automatic detection at stream initialization.
+	DefaultBzip3Memory = 0
 	bzip3Minimum       = 65 << 10
 	bzip3Maximum       = 511 << 20
 	bzip3Reserve       = 1 << 20
@@ -69,7 +72,10 @@ type bzip3Slot struct {
 	err      error
 }
 
-var bzip3Sizes = [...]int{1 << 20, 4 << 20, 16 << 20, 32 << 20, 64 << 20, 128 << 20, 256 << 20, 384 << 20, bzip3Maximum}
+var (
+	bzip3Sizes        = [...]int{1 << 20, 4 << 20, 16 << 20, 32 << 20, 64 << 20, 128 << 20, 256 << 20, 384 << 20, bzip3Maximum}
+	bzip3MemoryBudget = membudget.Resolve
+)
 
 func (writer *Bzip3Writer) Write(data []byte) (int, error) {
 	if writer.closed {
@@ -528,9 +534,7 @@ func newBzip3Blocks(ctx context.Context, block, threads int, memory uint64, enco
 		return nil, errors.New("invalid bzip3 block size or worker count")
 	}
 
-	if memory == 0 {
-		memory = DefaultBzip3Memory
-	}
+	memory = bzip3MemoryBudget(memory)
 
 	bound := int(C.bz3_bound(C.size_t(block)))
 

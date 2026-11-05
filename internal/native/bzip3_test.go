@@ -120,7 +120,7 @@ func TestBzip3Levels(t *testing.T) {
 }
 
 func TestBzip3MemoryBudget(t *testing.T) {
-	_, err := NewBzip3Writer(t.Context(), io.Discard, 9, 256, 0)
+	_, err := NewBzip3Writer(t.Context(), io.Discard, 9, 256, 2<<30)
 	if err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected memory rejection: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestBzip3MemoryBudget(t *testing.T) {
 	copy(header[:], "BZ3v1")
 	binary.LittleEndian.PutUint32(header[5:], bzip3Maximum)
 
-	_, err = NewBzip3Reader(t.Context(), bytes.NewReader(header[:]), 1, 0)
+	_, err = NewBzip3Reader(t.Context(), bytes.NewReader(header[:]), 1, 2<<30)
 	if err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected decoder memory rejection: %v", err)
 	}
@@ -147,6 +147,77 @@ func TestBzip3MemoryBudget(t *testing.T) {
 
 	if len(writer.blocks.slots) != 1 {
 		t.Fatalf("memory did not cap workers: %d", len(writer.blocks.slots))
+	}
+
+	writer.Close()
+}
+
+func TestBzip3AutomaticMemory(t *testing.T) {
+	previous := bzip3MemoryBudget
+
+	t.Cleanup(func() {
+		bzip3MemoryBudget = previous
+	})
+
+	budget := uint64(256 << 20)
+	probes := 0
+
+	bzip3MemoryBudget = func(explicit uint64) uint64 {
+		if explicit != 0 {
+			return explicit
+		}
+
+		probes++
+
+		return budget
+	}
+
+	writer, err := NewBzip3Writer(t.Context(), io.Discard, 3, 256, DefaultBzip3Memory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(writer.blocks.slots) != 1 || writer.blocks.block != bzip3Sizes[2] || writer.blocks.slots[0].state != nil || writer.blocks.slots[0].buffer != nil {
+		t.Fatal("auto must cap workers without changing level or allocating native state/buffers")
+	}
+
+	writer.Close()
+
+	var header [9]byte
+
+	copy(header[:], "BZ3v1")
+	binary.LittleEndian.PutUint32(header[5:], uint32(bzip3Sizes[2]))
+
+	reader, err := NewBzip3Reader(t.Context(), bytes.NewReader(header[:]), 256, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(reader.blocks.slots) != 1 || reader.blocks.slots[0].state != nil {
+		t.Fatal("decoder auto budget/lazy allocation")
+	}
+
+	reader.Close()
+
+	budget = 0
+
+	_, err = NewBzip3Writer(t.Context(), io.Discard, 3, 1, 0)
+	if err == nil || !strings.Contains(err.Error(), "require at least") || !strings.Contains(err.Error(), "budget is 0") {
+		t.Fatalf("zero headroom must fail before allocation: %v", err)
+	}
+
+	_, err = NewBzip3Reader(t.Context(), bytes.NewReader(header[:]), 1, 0)
+	if err == nil || !strings.Contains(err.Error(), "budget is 0") {
+		t.Fatalf("decoder must resolve headroom afresh: %v", err)
+	}
+
+	writer, err = NewBzip3Writer(t.Context(), io.Discard, 9, 256, 8<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if writer.blocks.block != bzip3Maximum || probes != 4 {
+		t.Fatal("explicit override must preserve level and skip probes")
 	}
 
 	writer.Close()
