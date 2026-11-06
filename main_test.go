@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +39,96 @@ type quietArgumentCase struct {
 	name      string
 	arguments []string
 	quiet     bool
+}
+
+func TestExtractionOnlyCommands(t *testing.T) {
+	data, err := os.ReadFile("internal/pak/testdata/archives.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var fixtures map[string]string
+
+	err = json.Unmarshal(data, &fixtures)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	references := map[string]string{"zipx": "test_read_format_zip_bzip2.zipx", "rar": "test_read_format_rar5_stored.rar"}
+
+	for format, reference := range references {
+		t.Run(format, func(t *testing.T) {
+			archive, err := base64.StdEncoding.DecodeString(fixtures[reference])
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			input := filepath.Join(t.TempDir(), "archive."+format)
+
+			err = os.WriteFile(input, archive, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			arguments := [][]string{
+				{"pakr", "unpack", input, "-o", t.TempDir(), "-q"},
+				{"pakr", "unpack", "-", "-o", t.TempDir(), "-q"},
+				{"pakr", "unpack", "-", "-f", format, "-o", t.TempDir(), "-q"},
+			}
+
+			for _, flags := range arguments {
+				application := command()
+				application.Reader = bytes.NewReader(archive)
+				application.ErrWriter = io.Discard
+
+				err = application.Run(t.Context(), flags)
+				if err != nil {
+					t.Fatalf("%v: %v", flags, err)
+				}
+			}
+
+			output := filepath.Join(t.TempDir(), "archive."+format)
+			arguments = [][]string{
+				{"pakr", "pack", input, "-f", format, "-o", "-", "-q"},
+				{"pakr", "pack", input, "-o", output, "-q"},
+				{"pakr", "pack", input, "-f", "zip", "-o", output, "-q"},
+			}
+
+			for _, flags := range arguments {
+				application := command()
+				application.Writer = io.Discard
+				application.ErrWriter = io.Discard
+
+				err = application.Run(t.Context(), flags)
+				if err == nil || !strings.Contains(err.Error(), "extraction-only") {
+					t.Fatalf("%v: expected extraction-only error, got %v", flags, err)
+				}
+			}
+
+			_, err = os.Stat(output)
+			if !os.IsNotExist(err) {
+				t.Fatalf("creation left output behind: %v", err)
+			}
+		})
+	}
+
+	var output bytes.Buffer
+
+	application := command()
+	application.Writer = &output
+
+	err = application.Run(t.Context(), []string{"pakr", "--formats"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	terms := []string{"zipx", "rar", "Extraction-only", "RAR4", "RAR5", "PPMd"}
+
+	for _, term := range terms {
+		if !strings.Contains(output.String(), term) {
+			t.Fatalf("--formats missing %q", term)
+		}
+	}
 }
 
 func TestExtractionLimitOptions(t *testing.T) {

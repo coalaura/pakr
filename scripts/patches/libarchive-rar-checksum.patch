@@ -1,0 +1,58 @@
+--- a/libarchive/archive_read_support_format_rar.c
++++ b/libarchive/archive_read_support_format_rar.c
+@@ -1115,5 +1115,11 @@
+   *buff = NULL;
+   if (rar->entry_eof || rar->offset_seek >= rar->unp_size) {
++    if (!rar->entry_eof && rar->file_crc != rar->crc_calculated) {
++      archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
++                        "File CRC error");
++      return (ARCHIVE_FAILED);
++    }
++    rar->entry_eof = 1;
+     *size = 0;
+     *offset = rar->offset;
+     return (ARCHIVE_EOF);
+@@ -1984,6 +1990,12 @@
+     return (ARCHIVE_FATAL);
+   }
+   p = h;
++  if (rar->file_crc != __archive_crc32(0, p, (unsigned)rar->packed_size))
++  {
++    archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
++                      "Symbolic link CRC error");
++    return (ARCHIVE_FAILED);
++  }
+ 
+   if (archive_entry_copy_symlink_l(entry,
+       p, (size_t)rar->packed_size, sconv))
+--- a/libarchive/archive_read_support_format_rar5.c
++++ b/libarchive/archive_read_support_format_rar5.c
+@@ -125,3 +125,4 @@
+ 	/* Optional hash fields. */
++	char has_crc32;
+ 	uint32_t stored_crc32;
+ 	uint32_t calculated_crc32;
+@@ -2152,3 +2153,4 @@
+ 	if(file_flags & CRC32) {
++		rar5->file.has_crc32 = 1;
+ 		rar5->file.stored_crc32 = crc;
+ 	}
+@@ -2773,3 +2775,3 @@
+-		if(rar5->file.stored_crc32 > 0) {
++		if(rar5->file.has_crc32) {
+ 			rar5->file.calculated_crc32 =
+ 				__archive_crc32(rar5->file.calculated_crc32, p,
+@@ -4283,6 +4285,8 @@
+ 
+ 	rar5->file.bytes_remaining -= to_read;
+ 	rar5->cstate.last_unstore_ptr += to_read;
++	/* Stored files use the same completion and EOF checks as decoded files. */
++	rar5->cstate.last_write_ptr = rar5->cstate.last_unstore_ptr;
+ 
+ 	update_crc(rar5, p, to_read);
+ 	return ARCHIVE_OK;
+@@ -4372,3 +4376,3 @@
+-		if(rar5->file.stored_crc32 > 0) {
++		if(rar5->file.has_crc32) {
+ 			/* Check CRC32 only when the file contains a CRC32
+ 			 * value for this file. */

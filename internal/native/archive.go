@@ -129,12 +129,20 @@ func (archive *Archive) Next() (Header, error) {
 
 	status := C.archive_read_next_header(archive.archive, &entry)
 	if status == C.ARCHIVE_EOF {
+		if C.archive_read_has_encrypted_entries(archive.archive) > 0 {
+			return Header{}, errors.New("encrypted archive entries are not supported")
+		}
+
 		return Header{}, io.EOF
 	}
 
 	err := archive.check(status)
 	if err != nil {
 		return Header{}, err
+	}
+
+	if C.archive_entry_is_encrypted(entry) != 0 {
+		return Header{}, errors.New("encrypted archive entries are not supported")
 	}
 
 	name := C.archive_entry_pathname_utf8(entry)
@@ -149,6 +157,28 @@ func (archive *Archive) Next() (Header, error) {
 		Modified: time.Unix(int64(C.archive_entry_mtime(entry)), int64(C.archive_entry_mtime_nsec(entry))),
 	}
 
+	if C.archive_entry_size_is_set(entry) == 0 {
+		header.Size = -1
+	} else if header.Size < 0 {
+		return Header{}, errors.New("invalid negative archive entry size")
+	}
+
+	if C.archive_entry_mtime_is_set(entry) == 0 {
+		header.Modified = time.Time{}
+	}
+
+	link := C.archive_entry_hardlink_utf8(entry)
+	if link != nil {
+		header.Kind = Hardlink
+		header.Link = C.GoString(link)
+
+		return header, nil
+	}
+
+	if C.archive_entry_hardlink(entry) != nil {
+		return Header{}, errors.New("archive hardlink target is not valid UTF-8")
+	}
+
 	kind := C.archive_entry_filetype(entry)
 
 	switch kind {
@@ -157,16 +187,15 @@ func (archive *Archive) Next() (Header, error) {
 	case C.AE_IFDIR:
 		header.Kind = Directory
 	case C.AE_IFLNK:
+		link = C.archive_entry_symlink_utf8(entry)
+		if link == nil {
+			return Header{}, errors.New("archive link target is not valid UTF-8")
+		}
+
 		header.Kind = Symlink
-		header.Link = C.GoString(C.archive_entry_symlink_utf8(entry))
+		header.Link = C.GoString(link)
 	default:
 		return Header{}, fmt.Errorf("unsupported archive entry type: %s", header.Name)
-	}
-
-	link := C.archive_entry_hardlink_utf8(entry)
-	if link != nil {
-		header.Kind = Hardlink
-		header.Link = C.GoString(link)
 	}
 
 	return header, nil
@@ -194,23 +223,30 @@ func (archive *Archive) Close() error {
 		return nil
 	}
 
-	var err error
+	var (
+		err    error
+		status C.int
+	)
 
 	if archive.writing {
 		err = archive.check(C.archive_write_close(archive.archive))
-		C.archive_write_free(archive.archive)
+		status = C.archive_write_free(archive.archive)
 	} else {
 		err = archive.check(C.archive_read_close(archive.archive))
-		C.archive_read_free(archive.archive)
+		status = C.archive_read_free(archive.archive)
 	}
 
 	archive.archive = nil
+
+	if status != C.ARCHIVE_OK {
+		err = errors.Join(err, fmt.Errorf("libarchive finalization failed: status %d", status))
+	}
 
 	return err
 }
 
 func (archive *Archive) check(status C.int) error {
-	if status < C.ARCHIVE_OK {
+	if status != C.ARCHIVE_OK {
 		return archive.failure()
 	}
 
@@ -227,12 +263,22 @@ func (archive *Archive) failure() error {
 }
 
 func OpenArchive(path string, writing bool, level, threads int) (*Archive, error) {
+	return openArchive(path, "7z", writing, level, threads)
+}
+
+// OpenArchiveReader enables only the selected container. These containers do
+// their own decompression and require no outer compression filters.
+func OpenArchiveReader(path, format string) (*Archive, error) {
+	return openArchive(path, format, false, 3, 1)
+}
+
+func openArchive(path, format string, writing bool, level, threads int) (*Archive, error) {
 	if level < 1 || level > 9 || threads < 1 {
 		return nil, errors.New("invalid archive level or thread count")
 	}
 
 	if !archiveLocaleAvailable {
-		return nil, errors.New("a UTF-8 C locale is required for 7z archives")
+		return nil, errors.New("a UTF-8 C locale is required for libarchive archives")
 	}
 
 	archive := &Archive{writing: writing}
@@ -259,7 +305,28 @@ func OpenArchive(path string, writing bool, level, threads int) (*Archive, error
 			C.free(unsafe.Pointer(options))
 		}
 	} else {
-		status = C.archive_read_support_format_7zip(archive.archive)
+		switch format {
+		case "7z":
+			status = C.archive_read_support_format_7zip(archive.archive)
+		case "zip":
+			status = C.archive_read_support_format_zip_seekable(archive.archive)
+		case "rar4":
+			status = C.archive_read_support_format_rar(archive.archive)
+			if status == C.ARCHIVE_OK {
+				// RAR4 names without the Unicode flag otherwise use the Windows
+				// OEM code page, even with a UTF-8 locale.
+				options := C.CString("rar:hdrcharset=UTF-8")
+				status = C.archive_read_set_options(archive.archive, options)
+
+				C.free(unsafe.Pointer(options))
+			}
+		case "rar5":
+			status = C.archive_read_support_format_rar5(archive.archive)
+		default:
+			archive.Close()
+
+			return nil, fmt.Errorf("unsupported native archive format: %q", format)
+		}
 	}
 
 	err := archive.check(status)

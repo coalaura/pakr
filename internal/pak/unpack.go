@@ -54,7 +54,7 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 			}
 		}
 
-		if options.Format.Container == "zip" || options.Format.Container == "7z" {
+		if options.Format.Container == "zip" || options.Format.Container == "7z" || options.Format.Container == "rar" {
 			temporary, err := os.CreateTemp("", "pakr-input-*")
 			if err != nil {
 				return err
@@ -128,7 +128,14 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	case "zip":
 		err = unpackZip(file, size, options.Threads, &extract)
 	case "7z":
-		err = unpack7z(input, options.Threads, &extract)
+		err = unpackArchive(input, "7z", -1, &extract)
+	case "rar":
+		var info rarInfo
+
+		info, err = rarFormat(ctx, file, size)
+		if err == nil {
+			err = unpackArchive(input, info.format, info.entries, &extract)
+		}
 	default:
 		err = unpackStream(source, file, size, inputName, options, &extract)
 	}
@@ -261,22 +268,41 @@ func unpackTar(source io.Reader, extract *extractor) error {
 	}
 }
 
-func unpack7z(input string, threads int, extract *extractor) error {
-	archive, err := native.OpenArchive(input, false, 3, threads)
+func unpackArchive(input, format string, entries int64, extract *extractor) (result error) {
+	archive, err := native.OpenArchiveReader(input, format)
 	if err != nil {
 		return err
 	}
 
-	defer archive.Close()
+	defer func() {
+		result = errors.Join(result, archive.Close())
+	}()
 
 	for {
+		err = extract.copying.ctx.Err()
+		if err != nil {
+			return err
+		}
+
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
+			if entries > 0 {
+				return errors.New("native decoder omitted RAR entries")
+			}
+
 			return archive.Close()
 		}
 
 		if err != nil {
 			return err
+		}
+
+		if entries == 0 {
+			return errors.New("native decoder returned unexpected RAR entries")
+		}
+
+		if entries > 0 {
+			entries--
 		}
 
 		err = extract.entry(header, archive)
@@ -317,6 +343,8 @@ func detectHeader(data []byte) (Format, error) {
 		name = "7z"
 	case bytes.HasPrefix(data, []byte{'P', 'K', 3, 4}), bytes.HasPrefix(data, []byte{'P', 'K', 5, 6}):
 		name = "zip"
+	case bytes.HasPrefix(data, []byte("Rar!\x1a\x07\x00")), bytes.HasPrefix(data, []byte("Rar!\x1a\x07\x01\x00")):
+		name = "rar"
 	case len(data) >= 262 && string(data[257:262]) == "ustar":
 		name = "tar"
 	default:

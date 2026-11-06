@@ -16,6 +16,8 @@ type Format struct {
 var formats = map[string]Format{
 	"tar":    {Name: "tar", Container: "tar"},
 	"zip":    {Name: "zip", Container: "zip"},
+	"zipx":   {Name: "zipx", Container: "zip"},
+	"rar":    {Name: "rar", Container: "rar"},
 	"7z":     {Name: "7z", Container: "7z"},
 	"gz":     {Name: "gz", Codec: native.Gzip},
 	"gzip":   {Name: "gz", Codec: native.Gzip},
@@ -59,7 +61,7 @@ func ParseFormat(name string) (Format, error) {
 		return format, nil
 	}
 
-	return Format{}, fmt.Errorf("unknown format %q (use tar, zip, 7z, gz, zst, bz2, bz3, xz, lz4, br, or tar.<codec>)", name)
+	return Format{}, fmt.Errorf("unknown format %q (use tar, zip, zipx, rar, 7z, gz, zst, bz2, bz3, xz, lz4, br, or tar.<codec>)", name)
 }
 
 func InferFormat(name string) (Format, error) {

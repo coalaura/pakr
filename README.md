@@ -49,7 +49,7 @@ Raw compression formats such as `gz` accept exactly one regular file. Use a cont
 
 `pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable magic bytes. Specify `-f` for Brotli without an extension or compressed tar from stdin or a file without a recognized extension.
 
-Stdin is streamed directly for sequential formats; only ZIP and 7z require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
+Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR and 7z require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
 
 Extraction defaults to at most 16 TiB of total payload, 1 TiB per file and 10 million entries, including directories and links. Adjust these with `--max-output`, `--max-file-size` and `--max-entries`; `0` disables the corresponding limit. Byte limits accept integer bytes or `KiB`, `MiB`, `GiB` and `TiB` suffixes, for example `pakr unpack backup.zip -o restored --max-output 32TiB --max-file-size 2TiB`. Declared sizes are checked before extraction and streams without sizes are checked as they produce output. ZIP workers share one budget. Exceeding a limit cancels extraction and removes incomplete files; already completed entries remain. Payload limits exclude container headers/padding and do not impose a whole-process RSS limit on native decoders or metadata.
 
@@ -86,12 +86,18 @@ Flags may follow input paths.
 | `bz2`, `bzip2` | libbz2, parallel concatenated streams | libbz2 for small/piped streams; indexed_bzip2 for large files |
 | `bz3`, `bzip3` | libbzip3, parallel independent blocks | libbzip3, parallel independent blocks |
 | `xz`, `lzma2` | liblzma, XZ container | liblzma |
-| `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng |
+| `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng; libarchive for advanced methods |
+| `zipx` | Extraction only | ZIP container with advanced methods through libarchive |
+| `rar` | Extraction only | RAR4/RAR5 through libarchive |
 | `lz4` | liblz4 multithreaded frame API | liblz4 frame API |
 | `7z` | libarchive with LZMA2 | libarchive |
 | `br`, `brotli` | libbrotlienc | libbrotlidec |
 
 Every raw codec can be combined with tar: `tar.gz`, `tar.zst`, `tar.bz2`, `tar.bz3`, `tar.xz`, `tar.lz4` and `tar.br`. Aliases include `tgz`, `tbz`, `tbz2`, `tbz3`, `txz` and `tzst`. `lzma2` selects an XZ container, not a headerless LZMA2 stream or legacy `.lzma` file.
+
+ZIPX is an extended ZIP container. Both `.zip` and `.zipx` accept Store (0), Deflate (8), BZIP2 (12), LZMA (14), ZSTD (93), XZ (95) and PPMd (98), including mixed-method archives. Store/Deflate entries retain the optimized parallel ZIP path; advanced entries use libarchive sequentially after central-directory path and size preflight. Unsupported methods, including Deflate64, MP3 (94), JPEG (96) and WavPack (97), fail explicitly. Encrypted entries are rejected. ZIP64 and self-extracting ZIP offsets are supported where the underlying readers accept them; advanced-method symbolic links are limited to those libarchive can decode.
+
+RAR versions are detected from their signatures; use `pakr unpack archive.rar -o restored` or `pakr unpack - -f rar -o restored`. Single-volume RAR4/RAR5 files, directories, Unicode names and supported links are extracted with available permissions and modification times. Compatibility is limited by libarchive: encrypted archives, multipart/split volumes, RAR4 solid compression and unsupported RAR5 solid variants fail. Neighboring volumes are never opened. An end header is required to detect truncation, so legacy RAR4 archives without one are rejected. RAR4 names without a Unicode field are interpreted as UTF-8; legacy OEM codepages are not supported. ZIPX and RAR creation is rejected whether selected with `-f` or inferred from the output filename.
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded. Gzip uses parallel, independent 1 MiB members in a standard concatenated stream. Gzip and ZIP compression cap in-flight workers at 16 to bound buffering.
 
@@ -110,7 +116,7 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 
 Zero and negative settings in this table still compress; they do not select store mode. Zstandard -3 and LZ4 acceleration 5 (frame level -4) are practical fast endpoints, rather than their much broader acceleration limits. Explicit `--level 9` or `--preset best` overrides `--max`'s XZ extreme setting. Libarchive's LZMA2 writer and Brotli are single-threaded.
 
-ZIP entries up to 8 MiB use reusable libdeflate contexts; larger entries stream through zlib-ng. ZIP extraction validates conflicting paths before dispatching independent files and creates symlinks after file workers finish. Zstandard and XZ reduce native encoder worker counts using a 2 GiB memory estimate; BZIP2 and LZ4 bound worker buffers/state to approximately 256 MiB. These are codec working-memory budgets, not whole-process RSS guarantees; archive metadata, parallel decoder indexes and libarchive's 7z decoder are outside these budgets. XZ decoding permits up to 2 GiB and reduces parallelism above 512 MiB; ordinary Zstandard decoding limits windows to 1 GiB.
+Ordinary ZIP entries up to 8 MiB use reusable libdeflate contexts; larger entries stream through zlib-ng. ZIP extraction validates conflicting paths before dispatching independent files and creates ordinary ZIP symlinks after file workers finish. Zstandard and XZ reduce native encoder worker counts using a 2 GiB memory estimate; BZIP2 and LZ4 bound worker buffers/state to approximately 256 MiB. These are codec working-memory budgets, not whole-process RSS guarantees; archive metadata, parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside these budgets. XZ decoding permits up to 2 GiB and reduces parallelism above 512 MiB; ordinary Zstandard decoding limits windows to 1 GiB.
 
 `--memory auto` resolves a fresh budget when a BZIP3 encoder or decoder is initialized: one quarter of the smallest reliable available-memory estimate, capped at 8 GiB. This leaves approximately 75% for the OS, other processes and allocations outside the codec budget. If every probe fails, the fallback is 256 MiB; a detected low value, including zero, is never raised to a minimum. For example, 512 MiB of headroom gives a 128 MiB budget, 4 GiB gives 1 GiB and 64 GiB gives the capped 8 GiB. Explicit sizes bypass detection. Other codecs retain the fixed budgets described above and do not probe memory.
 
@@ -139,7 +145,7 @@ Entries include directories and links; data sizes count regular file contents. T
 
 - Existing output archives and extracted files are never overwritten. Packing publishes through a no-clobber hard link, so the destination filesystem must support hard links.
 - Extraction uses Go's traversal-resistant `os.Root`, rejects escaping paths and link targets and removes the current partial file after failure. Entries extracted earlier may remain.
-- Regular files, directories and internal relative symlinks are supported; tar hardlinks are accepted during extraction. Symlinks on Windows require OS permission.
+- Regular files, directories and internal relative symlinks are supported; tar and supported RAR hardlinks are accepted during extraction. Symlinks on Windows require OS permission.
 - Permission bits and modification times are preserved where supported. Ownership, ACLs, extended attributes, special files, encrypted archives and sparse-file optimization are not supported. Keep input files stable while packing.
 
 ## Building from source

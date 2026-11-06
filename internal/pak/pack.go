@@ -27,6 +27,15 @@ type Options struct {
 }
 
 func Pack(ctx context.Context, inputs []string, options Options, stdout io.Writer) error {
+	if options.Format.Name == "zipx" || options.Format.Container == "rar" {
+		return fmt.Errorf("%s is extraction-only; archive creation is not supported", options.Format.Name)
+	}
+
+	outputFormat, _ := InferFormat(options.Output)
+	if outputFormat.Name == "zipx" || outputFormat.Container == "rar" {
+		return fmt.Errorf("%s is extraction-only; archive creation is not supported", outputFormat.Name)
+	}
+
 	if options.Seekable && options.Format.Codec != native.Zstd {
 		return errors.New("--seekable requires zst or tar.zst")
 	}

@@ -23,6 +23,8 @@ Go dependency versions and checksums are recorded in `go.mod`, `go.sum` and the 
 
 Redistributed binaries must retain the applicable third-party copyright notices and license texts. Native source archives are unmodified except for the committed patches under `scripts/patches/`; the ISA-L dependency is explicitly pinned to the rapidgzip author's fork.
 
+`internal/pak/testdata/archives.json` contains base64-encoded ZIPX and RAR fixtures from [libarchive 3.8.11's tests](https://github.com/libarchive/libarchive/tree/v3.8.11/libarchive/test), under the libarchive license above. Keys preserve upstream filenames; decoded bytes match `libarchive/test/<name>.uu` in the source pinned by `scripts/native.lock`. RAR utility fixtures are independently generated, not produced by pakr; upstream does not record every producer version or command. Expected contents follow the upstream tests. Encrypted, multipart and malformed regression fixtures exercise rejection; security tests mutate copies without changing the originals.
+
 ## BZIP3 licensing and relinking
 
 BZIP3 copyright (C) 2022-2024 Kamila Szewczyk. Pakr uses its low-level block API and statically links the library. Pakr's modification dated 2026-11-05, `scripts/patches/bzip3-allocation.patch`, checks native allocation failure before zeroing memory. The upstream 1.5.5 headers grant LGPLv3-or-later terms; pakr satisfies the LGPLv3 option, including the incorporated GPLv3 terms.

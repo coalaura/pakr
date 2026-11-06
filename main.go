@@ -82,7 +82,7 @@ func command() *cli.Command {
 
 func flags(packing bool) []cli.Flag {
 	outputUsage := "destination directory (default: .)"
-	formatUsage := "input format (default: detect from extension or header)"
+	formatUsage := "input format, including extraction-only zipx and rar (RAR4/RAR5); default: detect from extension or header"
 
 	if packing {
 		outputUsage = "output file, or - for stdout (default: archive.<format>)"

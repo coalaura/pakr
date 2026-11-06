@@ -300,7 +300,17 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 		return err
 	}
 
+	advanced := false
+
 	for _, file := range archive.File {
+		switch file.Method {
+		case zip.Store, zip.Deflate:
+		case 12, 14, 93, 95, 98:
+			advanced = true
+		default:
+			return fmt.Errorf("unsupported ZIP compression method %d for %q", file.Method, file.Name)
+		}
+
 		err = extract.budget.entry(int64(file.UncompressedSize64))
 		if err != nil {
 			return err
@@ -308,6 +318,18 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 	}
 
 	extract.prechecked = true
+
+	if advanced {
+		input, ok := source.(*os.File)
+		if !ok {
+			return errors.New("advanced ZIP methods require a seekable archive file")
+		}
+
+		err = unpackZipAdvanced(input.Name(), archive.File, extract)
+		if err != nil {
+			return err
+		}
+	}
 
 	ctx, cancel := context.WithCancel(extract.copying.ctx)
 	defer cancel()
@@ -354,6 +376,10 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 
 	// Directory metadata is collected by the caller; links are deferred until workers exit.
 	for _, file := range archive.File {
+		if file.Method != zip.Store && file.Method != zip.Deflate {
+			continue
+		}
+
 		if file.FileInfo().IsDir() {
 			header := zipHeader(file)
 			header.Kind = native.Directory
@@ -397,7 +423,7 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 	decoder := zipDecoder{codec: codec}
 
 	for _, file := range archive.File {
-		if file.Mode()&os.ModeSymlink != 0 {
+		if file.Mode()&os.ModeSymlink != 0 && (file.Method == zip.Store || file.Method == zip.Deflate) {
 			err = decoder.extract(file, extract)
 			if err != nil {
 				return err
@@ -416,8 +442,16 @@ func validateZipPaths(files []*zip.File) error {
 	paths := make(map[string]bool, len(files))
 
 	for _, file := range files {
-		if file.Flags&1 != 0 || file.UncompressedSize64 > uint64(^uint64(0)>>1) {
+		if file.Flags&0x41 != 0 || file.UncompressedSize64 > uint64(^uint64(0)>>1) {
 			return fmt.Errorf("encrypted or oversized zip entry: %s", file.Name)
+		}
+
+		if file.FileInfo().IsDir() && (file.UncompressedSize64 != 0 || file.CRC32 != 0) {
+			return fmt.Errorf("ZIP directory has payload or invalid checksum: %q", file.Name)
+		}
+
+		if file.Mode()&os.ModeSymlink != 0 && file.UncompressedSize64 > 4096 {
+			return fmt.Errorf("symbolic link target exceeds 4096 bytes: %q", file.Name)
 		}
 
 		name, err := cleanName(file.Name)

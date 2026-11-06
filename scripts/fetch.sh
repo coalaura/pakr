@@ -26,3 +26,8 @@ if [[ ! -f "$cache/src/bzip3/.pakr-allocation-check" ]]; then
 	patch -d "$cache/src/bzip3" -p1 < "$root/scripts/patches/bzip3-allocation.patch"
 	touch "$cache/src/bzip3/.pakr-allocation-check"
 fi
+
+if [[ ! -f "$cache/src/libarchive/.pakr-rar-checksum" ]]; then
+	patch -d "$cache/src/libarchive" -p1 < "$root/scripts/patches/libarchive-rar-checksum.patch"
+	touch "$cache/src/libarchive/.pakr-rar-checksum"
+fi
