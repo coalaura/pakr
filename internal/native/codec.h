@@ -6,6 +6,7 @@
 
 typedef struct pakr_codec pakr_codec;
 pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int extreme);
+pakr_codec *pakr_codec_new_lzip(int encode, int level, uint64_t memory, int64_t size);
 const char *pakr_codec_error(pakr_codec *codec);
 size_t pakr_codec_bound(pakr_codec *codec, size_t input_size);
 int pakr_codec_parameter(pakr_codec *codec, int parameter);

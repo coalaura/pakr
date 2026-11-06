@@ -31,7 +31,7 @@ func TestArchiveRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names := []string{"tar", "tar.gz", "tar.zst", "tar.bz2", "tar.bz3", "tbz3", "tar.xz", "tar.lz4", "tar.br", "zip", "7z", "gz", "zst", "bz2", "bz3", "bzip3", "xz", "lz4", "br"}
+	names := []string{"tar", "tar.gz", "tar.zst", "tar.bz2", "tar.bz3", "tbz3", "tar.xz", "tar.lz", "tlz", "tar.lz4", "tar.br", "zip", "7z", "gz", "zst", "bz2", "bz3", "bzip3", "xz", "lz", "lzip", "lz4", "br"}
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -148,7 +148,7 @@ func TestStreamingStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names := []string{"gz", "zst", "bz2", "bz3", "xz", "lz4", "br", "tar.zst", "tar.bz3"}
+	names := []string{"gz", "zst", "bz2", "bz3", "xz", "lz", "lz4", "br", "tar.zst", "tar.bz3", "tar.lz"}
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -174,7 +174,7 @@ func TestStreamingStdin(t *testing.T) {
 
 			options.Output = filepath.Join(base, name)
 
-			if name != "br" && name != "tar.zst" && name != "tar.bz3" {
+			if name != "br" && format.Container != "tar" {
 				options.Format = Format{}
 			}
 
@@ -185,7 +185,7 @@ func TestStreamingStdin(t *testing.T) {
 
 			filename := "stdin"
 
-			if name == "tar.zst" || name == "tar.bz3" {
+			if format.Container == "tar" {
 				filename = "input"
 			}
 

@@ -51,6 +51,7 @@ package native
 import "C"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -65,10 +66,12 @@ const (
 	LZ4
 	Brotli
 	Deflate
+	Lzip       = 11
 	BufferSize = 1 << 20
 )
 
 type Writer struct {
+	ctx    context.Context
 	codec  *C.pakr_codec
 	sizes  *[2]C.size_t
 	target io.Writer
@@ -77,6 +80,8 @@ type Writer struct {
 }
 
 type Reader struct {
+	ctx       context.Context
+	memory    uint64
 	codec     *C.pakr_codec
 	sizes     *[2]C.size_t
 	source    io.Reader
@@ -106,7 +111,18 @@ func (writer *Writer) Write(data []byte) (int, error) {
 	var written int
 
 	for len(data) > 0 {
+		if writer.ctx != nil {
+			writer.err = context.Cause(writer.ctx)
+			if writer.err != nil {
+				return written, writer.err
+			}
+		}
+
 		chunk := data[:min(len(data), BufferSize)]
+
+		if writer.ctx != nil {
+			chunk = chunk[:min(len(chunk), 64<<10)]
+		}
 
 		consumed, produced, _, err := step(writer.codec, writer.sizes, chunk, writer.buffer, false)
 		written += consumed
@@ -158,6 +174,13 @@ func (writer *Writer) finish() error {
 	}
 
 	for {
+		if writer.ctx != nil {
+			writer.err = context.Cause(writer.ctx)
+			if writer.err != nil {
+				return writer.err
+			}
+		}
+
 		_, produced, ended, err := step(writer.codec, writer.sizes, nil, writer.buffer, true)
 		if err != nil {
 			writer.err = err
@@ -205,6 +228,13 @@ func (reader *Reader) Read(data []byte) (int, error) {
 	}
 
 	for {
+		if reader.ctx != nil {
+			reader.err = context.Cause(reader.ctx)
+			if reader.err != nil {
+				return 0, reader.err
+			}
+		}
+
 		if len(reader.input) == 0 && reader.sourceErr == nil {
 			count, err := reader.source.Read(reader.buffer)
 
@@ -231,7 +261,16 @@ func (reader *Reader) Read(data []byte) (int, error) {
 
 			C.pakr_codec_free(reader.codec)
 
-			codec, err := newCodec(reader.format, false, 3, reader.threads, false)
+			var (
+				codec *C.pakr_codec
+				err   error
+			)
+
+			if reader.format == Lzip {
+				codec, err = newLzipCodec(false, 3, reader.memory, -1)
+			} else {
+				codec, err = newCodec(reader.format, false, 3, reader.threads, false)
+			}
 
 			reader.codec = codec
 			reader.err = err
@@ -242,7 +281,13 @@ func (reader *Reader) Read(data []byte) (int, error) {
 			}
 		}
 
-		consumed, produced, ended, err := step(reader.codec, reader.sizes, reader.input, data, errors.Is(reader.sourceErr, io.EOF))
+		output := data
+
+		if reader.ctx != nil {
+			output = output[:min(len(output), 64<<10)]
+		}
+
+		consumed, produced, ended, err := step(reader.codec, reader.sizes, reader.input, output, errors.Is(reader.sourceErr, io.EOF))
 
 		reader.input = reader.input[consumed:]
 		reader.ended = ended
@@ -276,6 +321,10 @@ func NewWriter(target io.Writer, format, level, threads int) (*Writer, error) {
 }
 
 func NewWriterExtreme(target io.Writer, format, level, threads int, extreme bool) (*Writer, error) {
+	if format == Lzip && threads > 0 {
+		return NewLzipWriter(context.Background(), target, level, 0, -1)
+	}
+
 	codec, err := newCodec(format, true, level, threads, extreme)
 	if err != nil {
 		return nil, err
@@ -287,6 +336,10 @@ func NewWriterExtreme(target io.Writer, format, level, threads int, extreme bool
 }
 
 func NewReader(source io.Reader, format, threads int) (*Reader, error) {
+	if format == Lzip && threads > 0 {
+		return NewLzipReader(context.Background(), source, 0)
+	}
+
 	codec, err := newCodec(format, false, 3, threads, false)
 	if err != nil {
 		return nil, err

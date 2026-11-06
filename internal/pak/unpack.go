@@ -167,6 +167,8 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	)
 
 	switch options.Format.Codec {
+	case native.Lzip:
+		codec, err = native.NewLzipReader(extract.copying.ctx, source, options.Memory)
 	case native.Bzip3:
 		codec, err = native.NewBzip3Reader(extract.copying.ctx, source, options.Threads, options.Memory)
 	case native.Gzip, native.Bzip2:
@@ -335,6 +337,8 @@ func detectHeader(data []byte) (Format, error) {
 		name = "bz2"
 	case bytes.HasPrefix(data, []byte("BZ3v1")):
 		name = "bz3"
+	case bytes.HasPrefix(data, []byte("LZIP")):
+		name = "lz"
 	case bytes.HasPrefix(data, []byte{0xfd, '7', 'z', 'X', 'Z', 0}):
 		name = "xz"
 	case bytes.HasPrefix(data, []byte{0x04, 0x22, 0x4d, 0x18}):

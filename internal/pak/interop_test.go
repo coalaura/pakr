@@ -23,7 +23,12 @@ type referenceArchive struct {
 }
 
 func TestReferenceInteroperability(t *testing.T) {
-	codecs := []referenceCodec{{format: "gz", tool: "gzip"}, {format: "zst", tool: "zstd"}, {format: "bz2", tool: "bzip2"}, {format: "xz", tool: "xz"}, {format: "lz4", tool: "lz4"}, {format: "br", tool: "brotli"}}
+	lzip := os.Getenv("LZIP_CLI")
+	if lzip == "" {
+		lzip = "lzip"
+	}
+
+	codecs := []referenceCodec{{format: "gz", tool: "gzip"}, {format: "zst", tool: "zstd"}, {format: "bz2", tool: "bzip2"}, {format: "xz", tool: "xz"}, {format: "lz", tool: lzip}, {format: "lz4", tool: "lz4"}, {format: "br", tool: "brotli"}}
 
 	data := bytes.Repeat([]byte("pakr native interoperability\x00\xff\xfe\n"), 100000)
 
@@ -105,7 +110,7 @@ func TestReferenceArchives(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	formats := []referenceArchive{{format: "tar", native: "pax"}, {format: "zip", native: "zip"}, {format: "7z", native: "7zip"}}
+	formats := []referenceArchive{{format: "tar", native: "pax"}, {format: "tar.lz", native: "pax"}, {format: "zip", native: "zip"}, {format: "7z", native: "7zip"}}
 
 	data := []byte("pakr archive interoperability\n")
 
@@ -159,7 +164,13 @@ func TestReferenceArchives(t *testing.T) {
 			verifyArchiveContents(t, referenceOutput, data)
 
 			archive = filepath.Join(base, "reference."+item.format)
-			encoder := exec.CommandContext(t.Context(), tool, "--format", item.native, "-cf", archive, "-C", base, "données")
+			encoder := exec.CommandContext(t.Context(), tool, "--format", item.native, "-cf", archive, "-C", base)
+
+			if item.format == "tar.lz" {
+				encoder.Args = append(encoder.Args, "--lzip")
+			}
+
+			encoder.Args = append(encoder.Args, "données")
 
 			output, err = encoder.CombinedOutput()
 			if err != nil {

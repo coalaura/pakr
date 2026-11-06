@@ -122,7 +122,7 @@ func TestExtractionOnlyCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	terms := []string{"zipx", "rar", "Extraction-only", "RAR4", "RAR5", "PPMd"}
+	terms := []string{"zipx", "rar", "Extraction-only", "RAR4", "RAR5", "PPMd", "lzip", "tar.lz", "tlz"}
 
 	for _, term := range terms {
 		if !strings.Contains(output.String(), term) {
@@ -388,7 +388,7 @@ func TestUnpackRejectsMax(t *testing.T) {
 }
 
 func TestCommandStatusPipeline(t *testing.T) {
-	formats := []string{"tar", "tar.zst", "tar.bz3", "zip", "7z", "gz", "bz3"}
+	formats := []string{"tar", "tar.zst", "tar.bz3", "tar.lz", "tlz", "zip", "7z", "gz", "bz3", "lz", "lzip"}
 
 	for _, format := range formats {
 		t.Run(format, func(t *testing.T) {
@@ -464,7 +464,7 @@ func TestCommandStatusPipeline(t *testing.T) {
 
 			name := "MixedCase.txt"
 
-			if format == "gz" || format == "bz3" {
+			if format == "gz" || format == "bz3" || format == "lz" || format == "lzip" {
 				name = "stdin"
 			}
 

@@ -13,7 +13,7 @@ import (
 )
 
 func TestCodecs(t *testing.T) {
-	formats := []int{Gzip, Zstd, Bzip2, XZ, LZ4, Brotli, Deflate}
+	formats := []int{Gzip, Zstd, Bzip2, XZ, Lzip, LZ4, Brotli, Deflate}
 	sizes := []int{0, 1, BufferSize + 37}
 
 	for _, format := range formats {

@@ -1,5 +1,6 @@
 #include "codec.h"
 #include "levels.h"
+#include "lzip.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,7 @@ struct pakr_codec {
 	LZ4F_preferences_t lz4_preferences;
 	BrotliEncoderState *brotli_encoder;
 	BrotliDecoderState *brotli_decoder;
+	pakr_lzip *lzip;
 };
 
 static int fail(pakr_codec *codec, const char *message) {
@@ -139,7 +141,20 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int e
 }
 
 const char *pakr_codec_error(pakr_codec *codec) {
+	if (codec->lzip) return pakr_lzip_error(codec->lzip);
 	return codec->error;
+}
+
+pakr_codec *pakr_codec_new_lzip(int encode, int level, uint64_t memory, int64_t size) {
+	pakr_codec *codec = calloc(1, sizeof(*codec));
+	if (!codec) return NULL;
+	codec->format = 11;
+	codec->encode = encode;
+	codec->level = level;
+	codec->threads = 1;
+	codec->lzip = pakr_lzip_new(encode, level, memory, size);
+	if (!codec->lzip) fail(codec, "cannot allocate lzip state");
+	return codec;
 }
 
 size_t pakr_codec_bound(pakr_codec *codec, size_t input_size) {
@@ -159,6 +174,7 @@ int pakr_codec_parameter(pakr_codec *codec, int parameter) {
 }
 
 int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, void *output, size_t *output_size, int finish) {
+	if (codec->lzip) return pakr_lzip_step(codec->lzip, input, input_size, output, output_size, finish);
 	size_t available_input = *input_size;
 	size_t available_output = *output_size;
 	int status = 0;
@@ -287,5 +303,6 @@ void pakr_codec_free(pakr_codec *codec) {
 	LZ4F_freeDecompressionContext(codec->lz4_decoder);
 	BrotliEncoderDestroyInstance(codec->brotli_encoder);
 	BrotliDecoderDestroyInstance(codec->brotli_decoder);
+	pakr_lzip_free(codec->lzip);
 	free(codec);
 }

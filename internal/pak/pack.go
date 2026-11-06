@@ -207,6 +207,14 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 			codec, err = native.NewBzip2Writer(target, options.Level, options.Threads)
 		} else if options.Format.Codec == native.Bzip3 {
 			codec, err = native.NewBzip3Writer(copying.ctx, target, options.Level, options.Threads, options.Memory)
+		} else if options.Format.Codec == native.Lzip {
+			size := int64(-1)
+
+			if options.Format.Container == "" {
+				size = entries[0].header.Size
+			}
+
+			codec, err = native.NewLzipWriter(copying.ctx, target, options.Level, options.Memory, size)
 		} else {
 			codec, err = native.NewWriterExtreme(target, options.Format.Codec, options.Level, options.Threads, options.Extreme)
 		}
