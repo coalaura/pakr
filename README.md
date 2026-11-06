@@ -112,21 +112,21 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 
 | Format | Compression | Decompression |
 | --- | --- | --- |
-| `tar` | Go `archive/tar` | Go `archive/tar` |
-| `gz`, `gzip` | ISA-L at levels 1-4; zlib-ng at levels 5-9 | zlib-ng for small/piped streams; rapidgzip for large files |
-| `zst`, `zstd` | libzstd | libzstd |
-| `bz2`, `bzip2` | libbz2, parallel concatenated streams | libbz2 for small/piped streams; indexed_bzip2 for large files |
-| `bz3`, `bzip3` | libbzip3, parallel independent blocks | libbzip3, parallel independent blocks |
-| `bsc` | libbsc, parallel independent blocks | libbsc, parallel indexed blocks |
-| `knz` | Kanzi C++ 2.6.0, native parallel blocks | Kanzi C++ 2.6.0, native parallel blocks |
-| `xz`, `lzma2` | liblzma, XZ container | liblzma |
-| `lz`, `lzip` | liblzma raw LZMA1, Lzip v1 container | liblzma, including concatenated members |
-| `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng; libarchive for advanced methods |
-| `zipx` | Extraction only | ZIP container with advanced methods through libarchive |
-| `rar` | Extraction only | RAR4/RAR5 through libarchive |
-| `lz4` | liblz4 multithreaded frame API | liblz4 frame API |
-| `7z` | libarchive with LZMA2 | libarchive |
-| `br`, `brotli` | libbrotlienc | libbrotlidec |
+| `tar` | Go [`archive/tar`](https://github.com/golang/go/tree/master/src/archive/tar) | Go [`archive/tar`](https://github.com/golang/go/tree/master/src/archive/tar) |
+| `gz`, `gzip` | [ISA-L](https://github.com/intel/isa-l) at levels 1-4; [zlib-ng](https://github.com/zlib-ng/zlib-ng) at levels 5-9 | [zlib-ng](https://github.com/zlib-ng/zlib-ng) for small/piped streams; [rapidgzip](https://github.com/mxmlnkn/rapidgzip) for large files |
+| `zst`, `zstd` | [libzstd](https://github.com/facebook/zstd) | [libzstd](https://github.com/facebook/zstd) |
+| `bz2`, `bzip2` | [libbz2](https://sourceware.org/git/?p=bzip2.git), parallel concatenated streams | [libbz2](https://sourceware.org/git/?p=bzip2.git) for small/piped streams; [indexed_bzip2](https://github.com/mxmlnkn/rapidgzip) for large files |
+| `bz3`, `bzip3` | [libbzip3](https://github.com/iczelia/bzip3), parallel independent blocks | [libbzip3](https://github.com/iczelia/bzip3), parallel independent blocks |
+| `bsc` | [libbsc](https://github.com/IlyaGrebnov/libbsc), parallel independent blocks | [libbsc](https://github.com/IlyaGrebnov/libbsc), parallel indexed blocks |
+| `knz` | [Kanzi C++ 2.6.0](https://github.com/flanglet/kanzi-cpp), native parallel blocks | [Kanzi C++ 2.6.0](https://github.com/flanglet/kanzi-cpp), native parallel blocks |
+| `xz`, `lzma2` | [liblzma](https://github.com/tukaani-project/xz), XZ container | [liblzma](https://github.com/tukaani-project/xz) |
+| `lz`, `lzip` | [liblzma](https://github.com/tukaani-project/xz) raw LZMA1, Lzip v1 container | [liblzma](https://github.com/tukaani-project/xz), including concatenated members |
+| `zip` | [Go ZIP container](https://github.com/golang/go/tree/master/src/archive/zip); [libdeflate](https://github.com/ebiggers/libdeflate) or streaming [zlib-ng](https://github.com/zlib-ng/zlib-ng) | [Go ZIP container](https://github.com/golang/go/tree/master/src/archive/zip); [libdeflate](https://github.com/ebiggers/libdeflate) or streaming [zlib-ng](https://github.com/zlib-ng/zlib-ng); [libarchive](https://github.com/libarchive/libarchive) for advanced methods |
+| `zipx` | Extraction only | ZIP container with advanced methods through [libarchive](https://github.com/libarchive/libarchive) |
+| `rar` | Extraction only | RAR4/RAR5 through [libarchive](https://github.com/libarchive/libarchive) |
+| `lz4` | [liblz4](https://github.com/lz4/lz4) multithreaded frame API | [liblz4](https://github.com/lz4/lz4) frame API |
+| `7z` | [libarchive](https://github.com/libarchive/libarchive) with LZMA2 | [libarchive](https://github.com/libarchive/libarchive) |
+| `br`, `brotli` | [libbrotlienc](https://github.com/google/brotli) | [libbrotlidec](https://github.com/google/brotli) |
 
 ### Tar combinations and aliases
 
