@@ -12,8 +12,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Tests (including integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache native dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            .native/downloads
+            .native/linux-amd64
+          key: native-linux-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
+
+      - name: Run all tests
+        env:
+          BUILD_IMAGE: coalaura/builder:latest
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE" \
+            --env BUILD_IMAGE --env JOBS=2 \
+            --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
+            --entrypoint sh "$BUILD_IMAGE" -ec '
+              trap '\''chown -R "$HOST_UID:$HOST_GID" .native'\'' EXIT
+              apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools
+              bash scripts/native.sh linux amd64
+              cmake -S .native/src/bzip3 -B .native/build/bzip3-cli \
+                -DCMAKE_TOOLCHAIN_FILE="$PWD/.native/build/linux-amd64/toolchain/toolchain.cmake" \
+                -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+                -DBZIP3_BUILD_APPS=ON -DBZIP3_ENABLE_PTHREAD=ON -DBZIP3_ENABLE_ARCH_NATIVE=OFF
+              cmake --build .native/build/bzip3-cli --parallel 2
+              while read -r name version checksum url; do
+                if [ "$name" = libbsc ]; then
+                  mkdir -p .native/build/bsc-reference
+                  tar -xf ".native/downloads/$name-$version.tar" --strip-components=1 -C .native/build/bsc-reference
+                  break
+                fi
+              done < scripts/native.lock
+              cmake -S .native/build/bsc-reference -B .native/build/bsc-reference/build \
+                -DCMAKE_TOOLCHAIN_FILE="$PWD/.native/build/linux-amd64/toolchain/toolchain.cmake" \
+                -DCMAKE_BUILD_TYPE=Release -DBSC_BUILD_SHARED_LIB=OFF \
+                -DBSC_ENABLE_NATIVE_COMPILATION=OFF -DBSC_ENABLE_OPENMP=OFF -DBSC_ENABLE_CUDA=OFF
+              cmake --build .native/build/bsc-reference/build --parallel 2
+              export BZIP3_CLI="$PWD/.native/build/bzip3-cli/bzip3"
+              export BSC_CLI="$PWD/.native/build/bsc-reference/build/bsc"
+              bash scripts/build.sh linux amd64 test -count=1
+              bash scripts/build.sh linux amd64 test -tags=integration -count=1
+            '
+
   build:
     name: ${{ matrix.os }}/${{ matrix.arch }}
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -22,10 +74,10 @@ jobs:
         os: [linux, windows, darwin]
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Cache native dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             .native/downloads
@@ -47,13 +99,6 @@ jobs:
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" "$PAKR_TARGET_ARCH"
               if [ "$PAKR_TARGET_OS/$PAKR_TARGET_ARCH" = linux/amd64 ]; then
-                bash scripts/build.sh linux amd64 test
-                cmake -S .native/src/bzip3 -B .native/build/bzip3-cli \
-                  -DCMAKE_TOOLCHAIN_FILE="$PWD/.native/build/linux-amd64/toolchain/toolchain.cmake" \
-                  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-                  -DBZIP3_BUILD_APPS=ON -DBZIP3_ENABLE_PTHREAD=ON -DBZIP3_ENABLE_ARCH_NATIVE=OFF
-                cmake --build .native/build/bzip3-cli --parallel 2
-                BZIP3_CLI="$PWD/.native/build/bzip3-cli/bzip3" bash scripts/build.sh linux amd64 test -tags=integration -run=TestBzip3CLI
                 bash scripts/source.sh "${{ github.ref_name }}"
               fi
               chown -R "$HOST_UID:$HOST_GID" .native
