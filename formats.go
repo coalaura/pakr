@@ -13,6 +13,7 @@ zipx    -          Varies     Varies
 rar     -          Varies     Varies
 bz2     Slow       Moderate   Moderate-high
 bz3     Moderate   Moderate   Very high
+bsc     Moderate   Moderate   Very high
 xz      Slow       Moderate   Very high
 lz      Slow       Moderate   Very high
 7z      Slow       Moderate   Very high
@@ -31,7 +32,7 @@ Extraction-only formats
 
 Compression settings
   - Ratings assume level 3 and vary with input, threads and hardware. Higher levels can be much slower.
-  - Level 9 selects each backend's standard maximum; --max also enables XZ extreme within resource budgets.
+  - Level 9 selects each backend's strongest practical settings; --max also enables XZ extreme within resource budgets.
   - --seekable enables independent frames and parallel file extraction for zst and tar.zst.
 `
 

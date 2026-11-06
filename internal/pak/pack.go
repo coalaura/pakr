@@ -93,7 +93,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		target    = stdout
 	)
 
-	if output != "-" || options.Format.Container == "7z" {
+	if output != "-" || options.Format.Container == "7z" || options.Format.Codec == native.BSC {
 		directory := ""
 
 		if output != "-" {
@@ -113,7 +113,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 
 	written := countingWriter{output: target}
 
-	if options.Log != nil {
+	if options.Log != nil && options.Format.Codec != native.BSC {
 		target = &written
 	}
 
@@ -142,7 +142,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 
 	size := written.bytes
 
-	if options.Format.Container == "7z" && options.Log != nil {
+	if (options.Format.Container == "7z" || options.Format.Codec == native.BSC) && options.Log != nil {
 		info, err := os.Stat(temporary.Name())
 		if err != nil {
 			return err
@@ -207,6 +207,13 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 			codec, err = native.NewBzip2Writer(target, options.Level, options.Threads)
 		} else if options.Format.Codec == native.Bzip3 {
 			codec, err = native.NewBzip3Writer(copying.ctx, target, options.Level, options.Threads, options.Memory)
+		} else if options.Format.Codec == native.BSC {
+			seekable, ok := target.(io.WriteSeeker)
+			if !ok {
+				return errors.New("BSC output requires seekable staging")
+			}
+
+			codec, err = native.NewBSCWriter(copying.ctx, seekable, options.Level, options.Threads, options.Memory)
 		} else if options.Format.Codec == native.Lzip {
 			size := int64(-1)
 

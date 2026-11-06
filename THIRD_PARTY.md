@@ -10,6 +10,7 @@ Native source versions, URLs and checksums are recorded in `scripts/native.lock`
 | bzip2 | `bzip2/LICENSE` |
 | BZIP3 1.5.5 | `bzip3/LICENSE` and source headers (LGPL-3.0-or-later; distributed using LGPLv3) |
 | libsais (included in BZIP3) | `bzip3/3rdparty/libsais-LICENSE` (Apache-2.0) |
+| libbsc 3.4.0 | `libbsc/LICENSE` (Apache-2.0); authorship and additional credits in `libbsc/AUTHORS` |
 | liblzma | `xz/COPYING` and `xz/COPYING.0BSD` |
 | liblz4 | `lz4/lib/LICENSE` (BSD-2-Clause) |
 | Brotli | `brotli/LICENSE` (MIT) |
@@ -24,6 +25,10 @@ Go dependency versions and checksums are recorded in `go.mod`, `go.sum` and the 
 Redistributed binaries must retain the applicable third-party copyright notices and license texts. Native source archives are unmodified except for the committed patches under `scripts/patches/`; the ISA-L dependency is explicitly pinned to the rapidgzip author's fork.
 
 `internal/pak/testdata/archives.json` contains base64-encoded ZIPX and RAR fixtures from [libarchive 3.8.11's tests](https://github.com/libarchive/libarchive/tree/v3.8.11/libarchive/test), under the libarchive license above. Keys preserve upstream filenames; decoded bytes match `libarchive/test/<name>.uu` in the source pinned by `scripts/native.lock`. RAR utility fixtures are independently generated, not produced by pakr; upstream does not record every producer version or command. Expected contents follow the upstream tests. Encrypted, multipart and malformed regression fixtures exercise rejection; security tests mutate copies without changing the originals.
+
+## libbsc
+
+libbsc 3.4.0 is authored by Ilya Grebnov, with additional contributors and algorithm credits listed in its `AUTHORS` file. Pakr statically links the Apache-2.0 library. Pakr's modification dated 2026-11-06, `scripts/patches/libbsc-bounds.patch`, adds checked decoding-buffer boundaries and malformed-input rejection; it does not change the format or encoder. The unmodified source and its license are included in release source archives.
 
 ## BZIP3 licensing and relinking
 

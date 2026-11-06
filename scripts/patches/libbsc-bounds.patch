@@ -1,0 +1,479 @@
+--- a/libbsc/platform/platform.h
++++ b/libbsc/platform/platform.h
+@@ -33,4 +33,11 @@
+ #ifndef _LIBBSC_PLATFORM_H
+ #define _LIBBSC_PLATFORM_H
++
++// Decoder bounds are local to each independent native call, never shared by workers.
++#ifdef __cplusplus
++extern thread_local const unsigned char * bsc_input_end;
++extern thread_local unsigned char * bsc_output_end;
++extern thread_local bool bsc_input_error;
++#endif
+ 
+ #define ALPHABET_SIZE (256)
+--- /dev/null
++++ b/libbsc/libbsc/bounds.h
+@@ -0,0 +1,46 @@
++// Bounds checks for untrusted CLI blocks. Wire representation is unchanged.
++thread_local const unsigned char * bsc_input_end = NULL;
++thread_local unsigned char * bsc_output_end = NULL;
++thread_local bool bsc_input_error = false;
++
++int bsc_coder_decode_block(const unsigned char *, unsigned char *, int);
++int bsc_lzp_decode_block(const unsigned char *, const unsigned char *, unsigned char *, int *, int, int);
++
++template <class Decode>
++static int bsc_decode_chunks(const unsigned char * input, int inputSize, unsigned char * output, int outputSize, Decode decode)
++{
++	if (inputSize < 1 || outputSize < 1) return LIBBSC_DATA_CORRUPT;
++	int count = input[0];
++	if (count == 0) return LIBBSC_DATA_CORRUPT;
++	if (count == 1)
++	{
++		bsc_input_end = input + inputSize;
++		bsc_output_end = output + outputSize;
++		return decode(input + 1, bsc_input_end, output);
++	}
++	int source = 1 + 8 * count;
++	int destination = 0;
++	if (source > inputSize) return LIBBSC_DATA_CORRUPT;
++	for (int block = 0; block < count; ++block)
++	{
++		int original, packed;
++		memcpy(&original, input + 1 + 8 * block, 4);
++		memcpy(&packed, input + 5 + 8 * block, 4);
++		if (original < 1 || packed < 1 || original > outputSize - destination || packed > inputSize - source) return LIBBSC_DATA_CORRUPT;
++		if (packed == original)
++		{
++			memcpy(output + destination, input + source, original);
++		}
++		else
++		{
++			bsc_input_end = input + source + packed;
++			bsc_output_end = output + destination + original;
++			int result = decode(input + source, bsc_input_end, output + destination);
++			if (result < 0) return result;
++			if (result != original) return LIBBSC_DATA_CORRUPT;
++		}
++		source += packed;
++		destination += original;
++	}
++	return source == inputSize ? destination : LIBBSC_DATA_CORRUPT;
++}
+--- a/libbsc/libbsc/libbsc.cpp
++++ b/libbsc/libbsc/libbsc.cpp
+@@ -43,4 +43,5 @@
+ #include "../coder/coder.h"
+ #include "../st/st.h"
++#include "bounds.h"
+ 
+ /* The block header can be at any address (e.g. a block inside a larger buffer), so it is */
+@@ -571,5 +572,11 @@
+     if (input == output)
+     {
+-        return bsc_decompress_inplace(output, inputSize, outputSize, features);
++        if (inputSize < LIBBSC_HEADER_SIZE) return LIBBSC_UNEXPECTED_EOB;
++        unsigned char * copy = (unsigned char *)bsc_malloc(inputSize);
++        if (copy == NULL) return LIBBSC_NOT_ENOUGH_MEMORY;
++        memcpy(copy, input, inputSize);
++        int result = bsc_decompress(copy, inputSize, output, outputSize, features);
++        bsc_free(copy);
++        return result;
+     }
+ 
+@@ -582,5 +589,5 @@
+     }
+ 
+-    if (inputSize < blockSize || outputSize < dataSize)
++    if (dataSize < 1 || blockSize < LIBBSC_HEADER_SIZE || inputSize < blockSize || outputSize < dataSize)
+     {
+         return LIBBSC_UNEXPECTED_EOB;
+@@ -595,6 +602,7 @@
+     if (mode == 0)
+     {
++        if (dataSize != blockSize - LIBBSC_HEADER_SIZE) return LIBBSC_DATA_CORRUPT;
+         bsc_memcpy(output, input + LIBBSC_HEADER_SIZE, dataSize, features);
+-        return LIBBSC_NO_ERROR;
++        return (unsigned int)bsc_load_int(input + 16) == bsc_adler32(output, dataSize, features) ? LIBBSC_NO_ERROR : LIBBSC_DATA_CORRUPT;
+     }
+ 
+@@ -603,4 +611,6 @@
+ 
+     num_indexes = input[blockSize - 1];
++    int codedSize = blockSize - LIBBSC_HEADER_SIZE - 1 - 4 * num_indexes;
++    if (codedSize < 1) return LIBBSC_DATA_CORRUPT;
+     if (num_indexes > 0)
+     {
+@@ -613,8 +623,15 @@
+     int blockSorter  = (mode >>  0) & 0x1f;
+ 
+-    int lzSize = bsc_coder_decompress(input + LIBBSC_HEADER_SIZE, output, coder, features);
++    int lzSize = bsc_decode_chunks(input + LIBBSC_HEADER_SIZE, codedSize, output, dataSize,
++        [coder](const unsigned char * source, const unsigned char *, unsigned char * target) { return bsc_coder_decode_block(source, target, coder); });
+     if (lzSize < LIBBSC_NO_ERROR)
+     {
+         return lzSize;
++    }
++
++    if (lzSize < 1 || index < 0 || index > lzSize) return LIBBSC_DATA_CORRUPT;
++    for (int number = 0; number < num_indexes; ++number)
++    {
++        if (indexes[number] < 0 || indexes[number] >= lzSize) return LIBBSC_DATA_CORRUPT;
+     }
+ 
+@@ -649,5 +666,7 @@
+ 
+             bsc_memcpy(buffer, output, lzSize, features);
+-            result = bsc_lzp_decompress(buffer, output, lzSize, lzpHashSize, lzpMinLen, &adler32_lzp, features);
++            result = bsc_decode_chunks(buffer, lzSize, output, dataSize,
++                [lzpHashSize, lzpMinLen](const unsigned char * source, const unsigned char * end, unsigned char * target) { return bsc_lzp_decode_block(source, end, target, NULL, lzpHashSize, lzpMinLen); });
++            if (result == dataSize) adler32_lzp = bsc_adler32(output, dataSize, features);
+             bsc_free(buffer);
+             if (result < LIBBSC_NO_ERROR)
+--- a/libbsc/coder/common/rangecoder.h
++++ b/libbsc/coder/common/rangecoder.h
+@@ -72,4 +72,9 @@
+     INLINE unsigned short InputShort()
+     {
++        if (bsc_input_end - (const unsigned char *)ari_input < 2)
++        {
++            bsc_input_error = true;
++            return 0;
++        }
+ #ifndef LIBBSC_NO_UNALIGNED_ACCESS
+         return *ari_input++;
+@@ -200,4 +205,5 @@
+     INLINE void InitDecoder(const unsigned char * input)
+     {
++        bsc_input_error = false;
+         ari_input = (unsigned short *)input;
+         ari_code  = 0;
+--- a/libbsc/coder/qlfc/qlfc.cpp
++++ b/libbsc/coder/qlfc/qlfc.cpp
+@@ -1426,5 +1426,5 @@
+     RangeCoder coder;
+ 
+-    unsigned char ALIGNED(64) MTFTable[ALPHABET_SIZE];
++    unsigned char ALIGNED(64) MTFTable[ALPHABET_SIZE] = {};
+ 
+     bsc_qlfc_init_model(model);
+@@ -1445,4 +1445,6 @@
+     int n = (int)coder.DecodeWord();
+ 
++    if (n < 1 || n > bsc_output_end - output || bsc_input_error) return LIBBSC_DATA_CORRUPT;
++
+     unsigned char usedChar[ALPHABET_SIZE];
+     for (int i = 0; i < ALPHABET_SIZE; ++i) usedChar[i] = 0;
+@@ -1517,5 +1519,5 @@
+                 while (true)
+                 {
+-                    if (bitRankSize == maxRank) break;
++                    if (bitRankSize >= maxRank) break;
+                     if (coder.DecodeBit(mixer->Mixup(*charPredictor, *statePredictor, *staticPredictor)))
+                     {
+@@ -1602,4 +1604,5 @@
+             }
+ 
++            if (rank < 1 || rank >= ALPHABET_SIZE) return LIBBSC_DATA_CORRUPT;
+             rankHistory[currentChar] = (unsigned char)bsc_bit_scan_reverse(rank);
+         }
+@@ -1661,4 +1664,5 @@
+                     ProbabilityCounter::UpdateBit1(*staticPredictor, M_RUN_EP_TH1, M_RUN_EP_AR1); staticPredictor++;
+                     mixer->UpdateBit1(M_RUN_EM_LR0, M_RUN_EM_LR1, M_RUN_EM_LR2, M_RUN_EM_TH1, M_RUN_EM_AR1);
++                    if (bitRunSize >= 30 || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+                     bitRunSize++; mixer = & model->mixerOfRunExponent[history < bitRunSize ? bitRunSize : history][bitRunSize];
+                 }
+@@ -1704,4 +1708,5 @@
+             contextRun   = ((contextRun   << 1) | (runSize < 3 ? 1    : 0)) & 0xf;
+ 
++            if (runSize < 1 || runSize > n - i || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+             if (((unsigned int)runSize <= 16) && (i <= n - 16))
+             {
+@@ -1736,5 +1741,5 @@
+     }
+ 
+-    return n;
++    return bsc_input_error ? LIBBSC_DATA_CORRUPT : n;
+ }
+ 
+@@ -1747,5 +1752,5 @@
+     RangeCoder coder;
+ 
+-    unsigned char ALIGNED(64) MTFTable[ALPHABET_SIZE];
++    unsigned char ALIGNED(64) MTFTable[ALPHABET_SIZE] = {};
+ 
+     bsc_qlfc_init_model(model);
+@@ -1766,4 +1771,6 @@
+     int n = (int)coder.DecodeWord();
+ 
++    if (n < 1 || n > bsc_output_end - output || bsc_input_error) return LIBBSC_DATA_CORRUPT;
++
+     unsigned char usedChar[ALPHABET_SIZE];
+     for (int i = 0; i < ALPHABET_SIZE; ++i) usedChar[i] = 0;
+@@ -1835,5 +1842,5 @@
+                 while (true)
+                 {
+-                    if (bitRankSize == maxRank) break;
++                    if (bitRankSize >= maxRank) break;
+ 
+                     int probability = (*charPredictor * F_RANK_EM_LR0 + *statePredictor * F_RANK_EM_LR1 + *staticPredictor * F_RANK_EM_LR2) >> 5;
+@@ -1899,4 +1906,5 @@
+             }
+ 
++            if (rank < 1 || rank >= ALPHABET_SIZE) return LIBBSC_DATA_CORRUPT;
+             rankHistory[currentChar] = (unsigned char)bsc_bit_scan_reverse(rank);
+         }
+@@ -1955,4 +1963,5 @@
+                     ProbabilityCounter::UpdateBit1(*charPredictor,   F_RUN_EC_TH1, F_RUN_EC_AR1); charPredictor++;
+                     ProbabilityCounter::UpdateBit1(*staticPredictor, F_RUN_EP_TH1, F_RUN_EP_AR1); staticPredictor++;
++                    if (bitRunSize >= 30 || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+                     bitRunSize++;
+                     coder.DecodeBit1(probability);
+@@ -1989,4 +1998,5 @@
+             contextRun   = ((contextRun   << 1) | (runSize < 3 ? 1    : 0)) & 0xf;
+         
++            if (runSize < 1 || runSize > n - i || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+             if (((unsigned int)runSize <= 16) && (i <= n - 16))
+             {
+@@ -2020,5 +2030,5 @@
+     }
+ 
+-    return n;
++    return bsc_input_error ? LIBBSC_DATA_CORRUPT : n;
+ }
+ 
+@@ -2029,5 +2039,5 @@
+ int QLFC_FAST_DECODE_FUNCTION_NAME (const unsigned char * input, unsigned char * output, QlfcStatisticalModel2 * model)
+ {
+-    unsigned char ALIGNED(64) MTFTable[ALPHABET_SIZE];
++    unsigned char ALIGNED(64) MTFTable[ALPHABET_SIZE] = {};
+ 
+     bsc_qlfc_init_model(model);
+@@ -2037,4 +2047,6 @@
+ 
+     int n = (int)coder.DecodeWord();
++
++    if (n < 1 || n > bsc_output_end - output || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+ 
+     unsigned char usedChar[ALPHABET_SIZE];
+@@ -2172,4 +2184,5 @@
+                     {
+                         ProbabilityCounter::UpdateBit<4>(predictor[bitRunSize], 142);
++                        if (bitRunSize >= 30 || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+                         bitRunSize++;
+                         coder.DecodeBit1<11>(p);
+@@ -2195,5 +2208,6 @@
+                     }
+ 
+-                    if ((runSize <= 16) && (output + 16 <= outputEnd))
++                    if (runSize > (unsigned int)(outputEnd - output) || bsc_input_error) return LIBBSC_DATA_CORRUPT;
++                    if ((runSize <= 16) && (outputEnd - output >= 16))
+                     {
+ #if LIBBSC_CPU_FEATURE >= LIBBSC_CPU_FEATURE_SSE2
+@@ -2221,4 +2235,5 @@
+                     }
+ 
++                    if (runSize > (unsigned int)(outputEnd - output) || bsc_input_error) return LIBBSC_DATA_CORRUPT;
+                     for (; runSize > 0; --runSize) { *output++ = currentChar; }
+                 }
+@@ -2231,5 +2246,5 @@
+     }
+ 
+-    return n;
++    return bsc_input_error ? LIBBSC_DATA_CORRUPT : n;
+ }
+ 
+--- a/libbsc/lzp/lzp.cpp
++++ b/libbsc/lzp/lzp.cpp
+@@ -716,5 +716,5 @@
+ int bsc_lzp_decode_block(const unsigned char * RESTRICT input, const unsigned char * inputEnd, unsigned char * RESTRICT output, int * table, int hashSize, int minLen)
+ {
+-    if (inputEnd - input < 4)
++    if (inputEnd - input < 4 || bsc_output_end - output < 4)
+     {
+         return LIBBSC_UNEXPECTED_EOB;
+@@ -723,4 +723,5 @@
+     if (int * RESTRICT lookup = table != NULL ? table : (int *)bsc_zero_malloc(((size_t)1 << hashSize) * sizeof(int)))
+     {
++        auto corrupt = [table, lookup]() { if (table == NULL) bsc_free(lookup); return LIBBSC_DATA_CORRUPT; };
+         unsigned int            mask        = (int)(1 << hashSize) - 1;
+         const unsigned char *   outputStart = output;
+@@ -733,8 +734,8 @@
+             unsigned int prev4 = *(unsigned int *)(output - 4);
+ 
+-            while (input < inputEnd - 8)
++            while (inputEnd - input > 8 && bsc_output_end - output >= 8)
+             {
+ #if LIBBSC_CPU_FEATURE >= LIBBSC_CPU_FEATURE_SSE2
+-                if (input < inputEnd - 16)
++                if (inputEnd - input > 16 && bsc_output_end - output >= 16)
+                 {
+                     __m128i next16 = _mm_loadu_si128((const __m128i *)input);
+@@ -857,5 +858,11 @@
+                 if (*input != 255)
+                 {
+-                    int len = minLen; while (true) { len += *input; if (*input++ != 254) break; }
++                    int len = minLen;
++                    while (true)
++                    {
++                        if (input == inputEnd || len > bsc_output_end - output || *input > bsc_output_end - output - len) return corrupt();
++                        len += *input;
++                        if (*input++ != 254) break;
++                    }
+ 
+                     const unsigned char * reference = outputStart + value;
+@@ -887,7 +894,8 @@
+             while (input < inputEnd)
+             {
++                if (output == bsc_output_end) return corrupt();
+ #if !defined(LIBBSC_NO_UNALIGNED_ACCESS)
+ #if LIBBSC_CPU_FEATURE >= LIBBSC_CPU_FEATURE_SSE2
+-                if (input < inputEnd - 16)
++                if (inputEnd - input > 16 && bsc_output_end - output >= 16)
+                 {
+                     __m128i next16 = _mm_loadu_si128((const __m128i *)input);
+@@ -924,5 +932,5 @@
+                 }
+ #elif LIBBSC_CPU_FEATURE == LIBBSC_CPU_FEATURE_A64
+-                if (input < inputEnd - 8)
++                if (inputEnd - input > 8 && bsc_output_end - output >= 8)
+                 {
+                     unsigned long long next8    = *(unsigned long long *)(input);
+@@ -958,7 +966,14 @@
+                 {
+                     input++;
++                    if (input == inputEnd) return corrupt();
+                     if (*input != 255)
+                     {
+-                        int len = minLen; while (true) { len += *input; if (*input++ != 254) break; }
++                        int len = minLen;
++                        while (true)
++                        {
++                            if (input == inputEnd || len > bsc_output_end - output || *input > bsc_output_end - output - len) return corrupt();
++                            len += *input;
++                            if (*input++ != 254) break;
++                        }
+ 
+                         const unsigned char * reference = outputStart + value;
+--- a/libbsc/st/st.cpp
++++ b/libbsc/st/st.cpp
+@@ -1092,7 +1092,7 @@
+     return failBack;
+ }
+ 
+-static void bsc_unst_reconstruct_case1_serial(unsigned char * RESTRICT T, unsigned int * RESTRICT P, unsigned int * RESTRICT count, int n, int start)
++static int bsc_unst_reconstruct_case1_serial(unsigned char * RESTRICT T, unsigned int * RESTRICT P, unsigned int * RESTRICT count, int n, int start)
+ {
+     unsigned int index[ALPHABET_SIZE];
+              int group[ALPHABET_SIZE];
+@@ -1118,18 +1118,21 @@
+ 
+     for (int p = start, i = n - 1; i >= 0; --i)
+     {
++        if (p < 0 || p >= n) return LIBBSC_DATA_CORRUPT;
+         unsigned int u = P[p];
+         if (u & 0x800000)
+         {
+             p = u & 0x7fffff;
++            if (p >= n) return LIBBSC_DATA_CORRUPT;
+             u = P[p];
+         }
+ 
+         T[i] = u >> 24; P[p]--; p = u & 0x7fffff;
+     }
++    return LIBBSC_NO_ERROR;
+ }
+ 
+-static void bsc_unst_reconstruct_case2_serial(unsigned char * RESTRICT T, unsigned int * RESTRICT P, unsigned int * RESTRICT count, int n, int start)
++static int bsc_unst_reconstruct_case2_serial(unsigned char * RESTRICT T, unsigned int * RESTRICT P, unsigned int * RESTRICT count, int n, int start)
+ {
+     unsigned int index[ALPHABET_SIZE];
+              int group[ALPHABET_SIZE];
+@@ -1155,16 +1158,19 @@
+ 
+     for (int p = start, i = n - 1; i >= 0; --i)
+     {
++        if (p < 0 || p >= n) return LIBBSC_DATA_CORRUPT;
+         unsigned int u = P[p];
+         if (u & 0x800000)
+         {
+             p = p - (u & 0x7fffff);
++            if (p < 0 || p >= n) return LIBBSC_DATA_CORRUPT;
+             u = P[p];
+         }
+ 
+         unsigned char c = u >> 24;
+         T[i] = c; P[p]--; p = (u & 0x7fffff) + count[c];
+     }
++    return LIBBSC_NO_ERROR;
+ }
+ 
+ static INLINE int bsc_unst_search(int index, unsigned int * p, unsigned int v)
+@@ -1174,7 +1180,7 @@
+ 
+ #define ST_NUM_FASTBITS (10)
+ 
+-static void bsc_unst_reconstruct_case3_serial(unsigned char * RESTRICT T, unsigned int * RESTRICT P, unsigned int * RESTRICT count, int n, int start)
++static int bsc_unst_reconstruct_case3_serial(unsigned char * RESTRICT T, unsigned int * RESTRICT P, unsigned int * RESTRICT count, int n, int start)
+ {
+     unsigned char   fastbits[1 << ST_NUM_FASTBITS];
+     unsigned int    index[ALPHABET_SIZE];
+@@ -1218,15 +1224,18 @@
+             start = P[start] & 0x7fffffff;
+         }
+ 
++        if (start >= n) return LIBBSC_DATA_CORRUPT;
+         T[0] = bsc_unst_search(fastbits[start >> shift], index, start);
+         P[start]--; start = P[start] + 1;
+ 
+         for (int p = start, i = n - 1; i >= 1; --i)
+         {
++            if (p < 0 || p >= n) return LIBBSC_DATA_CORRUPT;
+             unsigned int u = P[p];
+             if (u & 0x80000000)
+             {
+                 p = u & 0x7fffffff;
++                if (p >= n) return LIBBSC_DATA_CORRUPT;
+                 u = P[p];
+             }
+ 
+@@ -1234,13 +1243,14 @@
+             P[p]--; p = u;
+         }
+     }
++    return LIBBSC_NO_ERROR;
+ }
+ 
+-static void bsc_unst_reconstruct_serial(unsigned char * T, unsigned int * P, unsigned int * count, int n, int index, bool failBack)
++static int bsc_unst_reconstruct_serial(unsigned char * T, unsigned int * P, unsigned int * count, int n, int index, bool failBack)
+ {
+     if (n < 0x800000)   return bsc_unst_reconstruct_case1_serial(T, P, count, n, index);
+     if (!failBack)      return bsc_unst_reconstruct_case2_serial(T, P, count, n, index);
+-    if (failBack)       return bsc_unst_reconstruct_case3_serial(T, P, count, n, index);
++    return bsc_unst_reconstruct_case3_serial(T, P, count, n, index);
+ }
+ 
+ #ifdef LIBBSC_OPENMP
+@@ -1500,6 +1510,7 @@
+         if (unsigned int * bucket = (unsigned int *)bsc_zero_malloc(ALPHABET_SIZE * ALPHABET_SIZE * sizeof(unsigned int)))
+         {
+             unsigned int count[ALPHABET_SIZE]; memset(count, 0, ALPHABET_SIZE * sizeof(unsigned int));
++            int result = LIBBSC_NO_ERROR;
+ 
+ #ifdef LIBBSC_OPENMP
+ 
+@@ -1514,11 +1525,11 @@
+ 
+             {
+                 bool failBack = bsc_unst_sort_serial(T, P, count, bucket, n, k);
+-                bsc_unst_reconstruct_serial(T, P, count, n, index, failBack);
++                result = bsc_unst_reconstruct_serial(T, P, count, n, index, failBack);
+             }
+ 
+             bsc_free(bucket); bsc_free(P);
+-            return LIBBSC_NO_ERROR;
++            return result;
+         };
+         bsc_free(P);
+     };

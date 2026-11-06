@@ -55,7 +55,7 @@ Raw compression formats such as `gz` accept exactly one regular file. Use a cont
 
 `pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable magic bytes. Specify `-f` for Brotli without an extension or compressed tar from stdin or a file without a recognized extension.
 
-Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR and 7z require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
+Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR, 7z and BSC require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
 
 ### Extraction limits
 
@@ -86,7 +86,7 @@ Flags may follow input paths.
 | `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory when unpacking |
 | `-f`, `--format` | Explicit format or alias |
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
-| `--memory` | BZIP3 / Lzip codec allocation budget: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
+| `--memory` | BSC / BZIP3 / Lzip codec allocation budget: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -115,6 +115,7 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 | `zst`, `zstd` | libzstd | libzstd |
 | `bz2`, `bzip2` | libbz2, parallel concatenated streams | libbz2 for small/piped streams; indexed_bzip2 for large files |
 | `bz3`, `bzip3` | libbzip3, parallel independent blocks | libbzip3, parallel independent blocks |
+| `bsc` | libbsc, parallel independent blocks | libbsc, parallel indexed blocks |
 | `xz`, `lzma2` | liblzma, XZ container | liblzma |
 | `lz`, `lzip` | liblzma raw LZMA1, Lzip v1 container | liblzma, including concatenated members |
 | `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng; libarchive for advanced methods |
@@ -134,6 +135,7 @@ Every raw codec can be combined with tar:
 | `tar.zst` | `tzst` |
 | `tar.bz2` | `tbz`, `tbz2` |
 | `tar.bz3` | `tbz3` |
+| `tar.bsc` | `tbsc` |
 | `tar.xz` | `txz` |
 | `tar.lz` | `tlz` |
 | `tar.lz4` | - |
@@ -176,7 +178,7 @@ An end header is required to detect truncation, so legacy RAR4 archives without 
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
 
-`--memory` applies to BZIP3 and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside them.
+`--memory` applies to BSC, BZIP3 and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside them. BSC's block index is included in its budget.
 
 ### Compression levels
 
@@ -194,6 +196,10 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | GZIP | ISA-L 0, 1, 2, 3; then zlib-ng 5, 6, 7, 8, 9 |
 | BZIP2 / streaming ZIP DEFLATE | 1, 2, 3, 4, 5, 6, 7, 8, 9 |
 | BZIP3 block size (MiB) | 1, 4, 16, 32, 64, 128, 256, 384, 511 |
+| BSC block size (MiB) | 1, 4, 8, 16, 25, 32, 48, 64, 64 |
+| BSC entropy coder | fast, fast, static, static, static, adaptive, adaptive, adaptive, adaptive |
+| BSC LZP hash bits / match length | 15/72, 15/72, 15/72, 16/72, 16/72, 17/72, 18/72, 18/72, 18/128 |
+| BSC preprocessing | levels 8-9 auto-detect sorting contexts; level 9 also detects and reorders structured records |
 | XZ / 7z LZMA2 | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
 | Lzip dictionary (MiB) | 1, 1.5, 2, 3, 4, 8, 16, 24, 32 |
 | Lzip nice match length | 32, 32, 32, 32, 32, 64, 128, 163, 273 |
@@ -204,7 +210,7 @@ Zero and negative settings still compress; they do not select store mode. Zstand
 
 ### Automatic memory budgets
 
-For BZIP3 and Lzip, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
+For BSC, BZIP3 and Lzip, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
 
 | Available memory | Codec budget |
 | --- | --- |
@@ -247,6 +253,27 @@ These are snapshots, not a hard process-memory limit or a guarantee against OOM.
 ZIP extraction validates conflicting paths before dispatching independent files. Ordinary ZIP symlinks are created after file workers finish.
 
 Packing retains one metadata record per entry for deterministic ordering, complete preflight checks and accurate progress totals. A single input tree does not need a separate duplicate-path set; multiple input roots retain that check. Collection remains proportional to entry count, without a second traversal or disk-backed index.
+
+</details>
+
+<details>
+<summary>BSC format, memory requirements and validation</summary>
+
+BSC reads and writes the official libbsc 3.4.0 `bsc1` file format, including its little-endian block count, original offsets, record sizes, sorting contexts and 28-byte native block headers. CUDA, OpenMP and build-machine-specific CPU optimization are disabled in the static library; libbsc retains its supported runtime CPU paths. Pakr schedules independent block operations in Go and preserves output order without nested native thread pools.
+
+All BSC levels use BWT with LZP enabled. The mapping above was selected from measurements on text, source code, mixed data, random data and structured records. Fast QLFC is useful at levels 1-2, static QLFC is the balanced default and adaptive QLFC is used at higher levels. Larger blocks and preprocessing are workload-dependent, so they are not assumed to improve every input.
+
+**Memory and workers**
+
+Workers are reduced to fit the budget without reducing the requested compression level. Each BSC worker reserves `8*block + 16MiB + 4*2^hash` bytes, plus a shared 16 MiB allowance and 32 bytes per indexed block. This conservatively covers BWT/ST, LZP, preprocessing, QLFC and Go I/O buffers; actual use is lower for stored and small blocks. An impossible single-worker configuration is rejected before native worker allocation. Archive-declared block sizes and LZP hash settings receive the same preflight. Empty input has only the eight-byte BSC header and no native block work.
+
+**Seeking and validation**
+
+The block count is patched through pakr's existing seekable temporary output. Stdout therefore uses bounded-memory block processing and temporary-file staging rather than a nonstandard count-at-end container. Decoding indexes seekable input so physically reordered official blocks are restored by their original offsets; stdin is spooled only for BSC's required random access. The index is proportional to block count and included in the memory preflight.
+
+Missing, duplicate, overlapping and noncontiguous output regions, impossible sizes or counts, invalid preprocessing metadata, trailing data, truncation, checksum failures and native decode errors are rejected. Pakr also bounds native QLFC, LZP and ST decoding reads and writes against validated block buffers. Cancellation waits for active native calls before releasing their state; blocking I/O still depends on the underlying file.
+
+`--preset fast`, `balanced` and `best`, and `--max`, select the same public levels as other codecs. Explicit level and thread settings retain their usual override behavior.
 
 </details>
 

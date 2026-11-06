@@ -22,6 +22,11 @@ while read -r name version checksum url; do
 	fi
 done < "$root/scripts/native.lock"
 
+if [[ ! -f "$cache/src/libbsc/.pakr-bounds" ]]; then
+	patch -d "$cache/src/libbsc" -p1 < "$root/scripts/patches/libbsc-bounds.patch"
+	touch "$cache/src/libbsc/.pakr-bounds"
+fi
+
 if [[ ! -f "$cache/src/bzip3/.pakr-allocation-check" ]]; then
 	patch -d "$cache/src/bzip3" -p1 < "$root/scripts/patches/bzip3-allocation.patch"
 	touch "$cache/src/bzip3/.pakr-allocation-check"

@@ -54,7 +54,7 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 			}
 		}
 
-		if options.Format.Container == "zip" || options.Format.Container == "7z" || options.Format.Container == "rar" {
+		if options.Format.Container == "zip" || options.Format.Container == "7z" || options.Format.Container == "rar" || options.Format.Codec == native.BSC {
 			temporary, err := os.CreateTemp("", "pakr-input-*")
 			if err != nil {
 				return err
@@ -167,6 +167,8 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	)
 
 	switch options.Format.Codec {
+	case native.BSC:
+		codec, err = native.NewBSCReader(extract.copying.ctx, file, size, options.Threads, options.Memory)
 	case native.Lzip:
 		codec, err = native.NewLzipReader(extract.copying.ctx, source, options.Memory)
 	case native.Bzip3:
@@ -231,6 +233,10 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	}
 
 	header := native.Header{Name: name, Size: -1, Mode: 0o644}
+
+	if decoded, ok := codec.(*native.BSCReader); ok {
+		header.Size = decoded.Size()
+	}
 
 	return extract.entry(header, source)
 }
@@ -337,6 +343,8 @@ func detectHeader(data []byte) (Format, error) {
 		name = "bz2"
 	case bytes.HasPrefix(data, []byte("BZ3v1")):
 		name = "bz3"
+	case bytes.HasPrefix(data, []byte("bsc1")):
+		name = "bsc"
 	case bytes.HasPrefix(data, []byte("LZIP")):
 		name = "lz"
 	case bytes.HasPrefix(data, []byte{0xfd, '7', 'z', 'X', 'Z', 0}):

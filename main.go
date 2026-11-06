@@ -86,18 +86,18 @@ func flags(packing bool) []cli.Flag {
 
 	if packing {
 		outputUsage = "output file, or - for stdout (default: archive.<format>)"
-		formatUsage = "format, e.g. tar.zst, tgz, zip, gz, bz3, tbz3, xz, lz, tlz (default: infer output, then tar.zst)"
+		formatUsage = "format, e.g. tar.zst, tgz, zip, gz, bz3, tbz3, bsc, tbsc, xz, lz, tlz (default: infer output, then tar.zst)"
 	}
 
 	result := []cli.Flag{
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
-		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BZIP3 and Lzip): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
+		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3 and Lzip): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
 	}
 
 	if packing {
-		result = append(result, &cli.IntFlag{Name: "level", Aliases: []string{"l"}, Value: 3, Usage: "codec-specific effort: 1 (fastest), 3 (balanced), 9 (native maximum)"})
+		result = append(result, &cli.IntFlag{Name: "level", Aliases: []string{"l"}, Value: 3, Usage: "codec-specific effort: 1 (fast), 3 (balanced), 9 (strongest practical)"})
 		result = append(result, &cli.StringFlag{Name: "preset", Aliases: []string{"p"}, Usage: "fast, balanced, or best (alternative to --level)"})
 		result = append(result, &cli.BoolFlag{Name: "max", Usage: "maximum practical effort, XZ extreme, and all CPUs within memory budgets; explicit settings override"})
 		result = append(result, &cli.BoolFlag{Name: "seekable", Usage: "write independent ZSTD frames and the standard seek table (zst/tar.zst only)"})
