@@ -28,6 +28,7 @@ var formats = map[string]Format{
 	"bz3":    {Name: "bz3", Codec: native.Bzip3},
 	"bzip3":  {Name: "bz3", Codec: native.Bzip3},
 	"bsc":    {Name: "bsc", Codec: native.BSC},
+	"knz":    {Name: "knz", Codec: native.Kanzi},
 	"xz":     {Name: "xz", Codec: native.XZ},
 	"lz":     {Name: "lz", Codec: native.Lzip},
 	"lzip":   {Name: "lz", Codec: native.Lzip},
@@ -43,6 +44,7 @@ var aliases = map[string]string{
 	"tbz2": "tar.bz2",
 	"tbz3": "tar.bz3",
 	"tbsc": "tar.bsc",
+	"tknz": "tar.knz",
 	"txz":  "tar.xz",
 	"tlz":  "tar.lz",
 	"tzst": "tar.zst",
@@ -66,7 +68,7 @@ func ParseFormat(name string) (Format, error) {
 		return format, nil
 	}
 
-	return Format{}, fmt.Errorf("unknown format %q (use tar, zip, zipx, rar, 7z, gz, zst, bz2, bz3, bsc, xz, lz, lz4, br or tar.<codec>)", name)
+	return Format{}, fmt.Errorf("unknown format %q (use tar, zip, zipx, rar, 7z, gz, zst, bz2, bz3, bsc, knz, xz, lz, lz4, br or tar.<codec>)", name)
 }
 
 func InferFormat(name string) (Format, error) {

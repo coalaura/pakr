@@ -11,6 +11,7 @@ Native source versions, URLs and checksums are recorded in `scripts/native.lock`
 | BZIP3 1.5.5 | `bzip3/LICENSE` and source headers (LGPL-3.0-or-later; distributed using LGPLv3) |
 | libsais (included in BZIP3) | `bzip3/3rdparty/libsais-LICENSE` (Apache-2.0) |
 | libbsc 3.4.0 | `libbsc/LICENSE` (Apache-2.0); authorship and additional credits in `libbsc/AUTHORS` |
+| Kanzi C++ 2.6.0 | `kanzi/LICENSE` (Apache-2.0); copyright Frederic Langlet |
 | liblzma | `xz/COPYING` and `xz/COPYING.0BSD` |
 | liblz4 | `lz4/lib/LICENSE` (BSD-2-Clause) |
 | Brotli | `brotli/LICENSE` (MIT) |
@@ -29,6 +30,10 @@ Redistributed binaries must retain the applicable third-party copyright notices 
 ## libbsc
 
 libbsc 3.4.0 is authored by Ilya Grebnov, with additional contributors and algorithm credits listed in its `AUTHORS` file. Pakr statically links the Apache-2.0 library. Pakr's modification dated 2026-11-06, `scripts/patches/libbsc-bounds.patch`, adds checked decoding-buffer boundaries and malformed-input rejection; it does not change the format or encoder. The unmodified source and its license are included in release source archives.
+
+## Kanzi
+
+Kanzi C++ 2.6.0 by Frederic Langlet is statically linked under Apache-2.0. Pakr's modification dated 2026-11-07, `scripts/patches/kanzi-memory.patch`, bounds binary entropy buffers: expanding single-chunk encodes use the existing transformed-copy fallback, and decoding rejects payload lengths exceeding the enclosing block before allocation. The official bitstream remains unchanged. The pinned original source, license and patch are included in release source archives.
 
 ## BZIP3 licensing and relinking
 

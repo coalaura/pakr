@@ -51,11 +51,13 @@ pakr --version
 
 Raw compression formats such as `gz` accept exactly one regular file. Use a container such as `tar.gz`, `zip` or `7z` for multiple files or directories. Use `-o -` to write archive bytes to stdout.
 
+Kanzi also accepts a raw byte stream from stdin: `pakr pack - -f knz -o -`. Use `tar.knz` (alias `tknz`) when packing files or directories into a TAR archive.
+
 ### Unpacking
 
 `pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable magic bytes. Specify `-f` for Brotli without an extension or compressed tar from stdin or a file without a recognized extension.
 
-Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR, 7z and BSC require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
+Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR, 7z and BSC require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
 
 ### Extraction limits
 
@@ -83,10 +85,10 @@ Flags may follow input paths.
 
 | Flag | Description |
 | --- | --- |
-| `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory when unpacking |
+| `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory or `-` for raw Kanzi stdout when unpacking |
 | `-f`, `--format` | Explicit format or alias |
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
-| `--memory` | BSC / BZIP3 / Lzip codec allocation budget: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
+| `--memory` | BSC / BZIP3 / Kanzi / Lzip codec allocation budget: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -116,6 +118,7 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 | `bz2`, `bzip2` | libbz2, parallel concatenated streams | libbz2 for small/piped streams; indexed_bzip2 for large files |
 | `bz3`, `bzip3` | libbzip3, parallel independent blocks | libbzip3, parallel independent blocks |
 | `bsc` | libbsc, parallel independent blocks | libbsc, parallel indexed blocks |
+| `knz` | Kanzi C++ 2.6.0, native parallel blocks | Kanzi C++ 2.6.0, native parallel blocks |
 | `xz`, `lzma2` | liblzma, XZ container | liblzma |
 | `lz`, `lzip` | liblzma raw LZMA1, Lzip v1 container | liblzma, including concatenated members |
 | `zip` | Go ZIP container; libdeflate or streaming zlib-ng | Go ZIP container; libdeflate or streaming zlib-ng; libarchive for advanced methods |
@@ -136,6 +139,7 @@ Every raw codec can be combined with tar:
 | `tar.bz2` | `tbz`, `tbz2` |
 | `tar.bz3` | `tbz3` |
 | `tar.bsc` | `tbsc` |
+| `tar.knz` | `tknz` |
 | `tar.xz` | `txz` |
 | `tar.lz` | `tlz` |
 | `tar.lz4` | - |
@@ -178,7 +182,7 @@ An end header is required to detect truncation, so legacy RAR4 archives without 
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
 
-`--memory` applies to BSC, BZIP3 and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside them. BSC's block index is included in its budget.
+`--memory` applies to BSC, BZIP3, Kanzi and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside them. BSC's block index is included in its budget.
 
 ### Compression levels
 
@@ -200,6 +204,8 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | BSC entropy coder | fast, fast, static, static, static, adaptive, adaptive, adaptive, adaptive |
 | BSC LZP hash bits / match length | 15/72, 15/72, 15/72, 16/72, 16/72, 17/72, 18/72, 18/72, 18/128 |
 | BSC preprocessing | levels 8-9 auto-detect sorting contexts; level 9 also detects and reorders structured records |
+| Kanzi | Native levels 1-9, unchanged; 64-bit block checksums |
+| Kanzi block size (MiB) | 4, 4, 4, 4, 4, 8, 16, 16, 32 |
 | XZ / 7z LZMA2 | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
 | Lzip dictionary (MiB) | 1, 1.5, 2, 3, 4, 8, 16, 24, 32 |
 | Lzip nice match length | 32, 32, 32, 32, 32, 64, 128, 163, 273 |
@@ -210,7 +216,7 @@ Zero and negative settings still compress; they do not select store mode. Zstand
 
 ### Automatic memory budgets
 
-For BSC, BZIP3 and Lzip, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
+For BSC, BZIP3, Kanzi and Lzip, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
 
 | Available memory | Codec budget |
 | --- | --- |
@@ -236,6 +242,10 @@ These are snapshots, not a hard process-memory limit or a guarantee against OOM.
 </details>
 
 ### Codec details
+
+Kanzi writes the official headered version-7 bitstream and reads version-7 streams from both upstream C++ and Go tools, including their other transform/entropy combinations. Older bitstream versions and concatenated streams are rejected. Native levels retain LZ, BWT, ROLZ, CM, TPAQ and TPAQX strategies; level 3 remains the default. Checksums, header integrity, declared sizes and stream termination are checked before reporting successful extraction.
+
+Kanzi admission reserves block buffers, transform tables, entropy state, growth copies and native worker overhead. Workers are capped at 64 and reduced to fit `--memory` and the known block count. The selected level and block size are never reduced; a budget too small for one worker fails before block/model allocation. Decompression performs the same preflight using the validated stream header. Estimates are conservative, particularly for small or easily compressed inputs. Level 9 uses 32 MiB blocks and requires substantially more memory per worker than the lower levels. Status output reports admitted jobs and reserved memory. Cancellation is checked between I/O operations and native transform/entropy phases; a running native phase must finish before cancellation can complete.
 
 <details>
 <summary>Worker limits, fixed budgets and archive metadata</summary>

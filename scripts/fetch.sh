@@ -18,6 +18,9 @@ while read -r name version checksum url; do
 	if [[ "$name" == libbsc ]]; then
 		source_stamp="$checksum-$(sha256sum "$root/scripts/patches/"libbsc-*.patch | sha256sum | cut -d ' ' -f 1)"
 	fi
+	if [[ "$name" == kanzi ]]; then
+		source_stamp="$checksum-$(sha256sum "$root/scripts/patches/kanzi-memory.patch" | cut -d ' ' -f 1)"
+	fi
 	if [[ ! -f "$cache/src/$name/.pakr-$source_stamp" ]]; then
 		rm -rf "$cache/src/$name"
 		mkdir -p "$cache/src/$name"
@@ -25,6 +28,11 @@ while read -r name version checksum url; do
 		touch "$cache/src/$name/.pakr-$source_stamp"
 	fi
 done < "$root/scripts/native.lock"
+
+if [[ ! -f "$cache/src/kanzi/.pakr-memory" ]]; then
+	patch -d "$cache/src/kanzi" -p1 < "$root/scripts/patches/kanzi-memory.patch"
+	touch "$cache/src/kanzi/.pakr-memory"
+fi
 
 if [[ ! -f "$cache/src/libbsc/.pakr-bounds" ]]; then
 	patch -d "$cache/src/libbsc" -p1 < "$root/scripts/patches/libbsc-bounds.patch"

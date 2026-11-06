@@ -1,4 +1,5 @@
 # name version sha256 source
+kanzi 2.6.0 fc031685ede00321b4ba09e4c451564e35d9e7339ea67dfb3278a8dd4cfddfd9 https://codeload.github.com/flanglet/kanzi-cpp/tar.gz/refs/tags/2.6.0
 zlib-ng 2.3.3 f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1 https://codeload.github.com/zlib-ng/zlib-ng/tar.gz/refs/tags/2.3.3
 zstd 1.5.7 37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3 https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7
 bzip2 1.0.8 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269 https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz

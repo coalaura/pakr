@@ -31,7 +31,7 @@ func TestArchiveRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names := []string{"tar", "tar.gz", "tar.zst", "tar.bz2", "tar.bz3", "tbz3", "tar.bsc", "tbsc", "tar.xz", "tar.lz", "tlz", "tar.lz4", "tar.br", "zip", "7z", "gz", "zst", "bz2", "bz3", "bzip3", "bsc", "xz", "lz", "lzip", "lz4", "br"}
+	names := []string{"tar", "tar.gz", "tar.zst", "tar.bz2", "tar.bz3", "tbz3", "tar.bsc", "tbsc", "tar.knz", "tknz", "tar.xz", "tar.lz", "tlz", "tar.lz4", "tar.br", "zip", "7z", "gz", "zst", "bz2", "bz3", "bzip3", "bsc", "knz", "xz", "lz", "lzip", "lz4", "br"}
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -148,7 +148,7 @@ func TestStreamingStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names := []string{"gz", "zst", "bz2", "bz3", "xz", "lz", "lz4", "br", "tar.zst", "tar.bz3", "tar.lz"}
+	names := []string{"gz", "zst", "bz2", "bz3", "knz", "xz", "lz", "lz4", "br", "tar.zst", "tar.bz3", "tar.knz", "tar.lz"}
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {

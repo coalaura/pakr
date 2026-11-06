@@ -108,6 +108,10 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 		}
 	}
 
+	if output == "-" && options.Format.Name == "knz" {
+		return unpackKanziStdout(source, options, budget, progress)
+	}
+
 	err = os.MkdirAll(output, 0o755)
 	if err != nil {
 		return err
@@ -167,6 +171,15 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	)
 
 	switch options.Format.Codec {
+	case native.Kanzi:
+		var stream *native.KanziStream
+
+		stream, err = native.NewKanziReader(extract.copying.ctx, source, options.Threads, options.Memory)
+		if err == nil {
+			codec = stream
+
+			logKanzi(options, stream.Settings)
+		}
 	case native.BSC:
 		codec, err = native.NewBSCReader(extract.copying.ctx, file, size, options.Threads, options.Memory)
 	case native.Lzip:
@@ -345,6 +358,8 @@ func detectHeader(data []byte) (Format, error) {
 		name = "bz3"
 	case bytes.HasPrefix(data, []byte("bsc1")):
 		name = "bsc"
+	case bytes.HasPrefix(data, []byte("KANZ")):
+		name = "knz"
 	case bytes.HasPrefix(data, []byte("LZIP")):
 		name = "lz"
 	case bytes.HasPrefix(data, []byte{0xfd, '7', 'z', 'X', 'Z', 0}):

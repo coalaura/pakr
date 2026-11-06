@@ -50,9 +50,22 @@ build_parallel() {
 	touch "$prefix/.parallel-$bridge_signature"
 }
 
+build_kanzi() {
+	local bridge_signature
+	bridge_signature=$(cat "$root/scripts/kanzi/CMakeLists.txt" "$root/internal/native/kanzi/kanzi.cc" "$root/internal/native/kanzi.h"; printf '%s' "$signature")
+	bridge_signature=$(printf '%s' "$bridge_signature" | sha256sum | cut -d ' ' -f 1)
+	if [[ -f "$prefix/.kanzi-$bridge_signature" && -f "$prefix/lib/libpakr_kanzi.a" ]]; then
+		return
+	fi
+	build_cmake kanzi "$root/scripts/kanzi" -DSOURCE="$root/.native/src/kanzi"
+	rm -f "$prefix"/.kanzi-*
+	touch "$prefix/.kanzi-$bridge_signature"
+}
+
 if [[ -f "$prefix/.complete-$signature" ]]; then
 	printf 'Native libraries ready: %s/%s\n' "$target" "$arch"
 	build_parallel
+	build_kanzi
 	exit 0
 fi
 
@@ -104,3 +117,4 @@ build_cmake libarchive "$sources/libarchive" \
 rm -f "$prefix"/.complete-*
 touch "$prefix/.complete-$signature"
 build_parallel
+build_kanzi

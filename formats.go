@@ -14,6 +14,7 @@ rar     -          Varies     Varies
 bz2     Slow       Moderate   Moderate-high
 bz3     Moderate   Moderate   Very high
 bsc     Moderate   Moderate   Very high
+knz     Fast       Fast       High-very high
 xz      Slow       Moderate   Very high
 lz      Slow       Moderate   Very high
 7z      Slow       Moderate   Very high

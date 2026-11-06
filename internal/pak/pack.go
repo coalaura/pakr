@@ -24,6 +24,8 @@ type Options struct {
 	Limits   *ExtractionLimits
 	Log      *minimal.Minimal
 	Progress io.Writer
+	Stdin    io.Reader
+	Stdout   io.Writer
 }
 
 func Pack(ctx context.Context, inputs []string, options Options, stdout io.Writer) error {
@@ -75,12 +77,25 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		}
 	}
 
-	entries, total, err := collect(ctx, inputs, absolute)
-	if err != nil {
-		return err
+	var entries []entry
+
+	total := int64(-1)
+
+	stdin := options.Format.Name == "knz" && len(inputs) == 1 && inputs[0] == "-"
+	if stdin {
+		if options.Stdin == nil {
+			return errors.New("kanzi stdin input is unavailable")
+		}
+	} else {
+		options.Stdin = nil
+
+		entries, total, err = collect(ctx, inputs, absolute)
+		if err != nil {
+			return err
+		}
 	}
 
-	if options.Format.Container == "" && (len(entries) != 1 || entries[0].header.Kind != native.Regular) {
+	if !stdin && options.Format.Container == "" && (len(entries) != 1 || entries[0].header.Kind != native.Regular) {
 		return fmt.Errorf("%s compresses one regular file; use tar.%s for files or directories", options.Format.Name, options.Format.Name)
 	}
 
@@ -207,6 +222,21 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 			codec, err = native.NewBzip2Writer(target, options.Level, options.Threads)
 		} else if options.Format.Codec == native.Bzip3 {
 			codec, err = native.NewBzip3Writer(copying.ctx, target, options.Level, options.Threads, options.Memory)
+		} else if options.Format.Codec == native.Kanzi {
+			size := int64(-1)
+
+			if options.Format.Container == "" && options.Stdin == nil {
+				size = entries[0].header.Size
+			}
+
+			var stream *native.KanziStream
+
+			stream, err = native.NewKanziWriter(copying.ctx, target, options.Level, options.Threads, options.Memory, size)
+			if err == nil {
+				codec = stream
+
+				logKanzi(options, stream.Settings)
+			}
 		} else if options.Format.Codec == native.BSC {
 			seekable, ok := target.(io.WriteSeeker)
 			if !ok {
@@ -237,6 +267,9 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 
 	if options.Format.Container == "tar" {
 		err = packTar(target, entries, copying)
+	} else if options.Stdin != nil {
+		_, err = copying.copy(target, options.Stdin)
+		copying.progress.File()
 	} else {
 		err = copying.file(target, &entries[0])
 		copying.progress.File()

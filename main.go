@@ -81,7 +81,7 @@ func command() *cli.Command {
 }
 
 func flags(packing bool) []cli.Flag {
-	outputUsage := "destination directory (default: .)"
+	outputUsage := "destination directory, or - for raw Kanzi stdout (default: .)"
 	formatUsage := "input format, including extraction-only zipx and rar (RAR4/RAR5); default: detect from extension or header"
 
 	if packing {
@@ -93,7 +93,7 @@ func flags(packing bool) []cli.Flag {
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
-		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3 and Lzip): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
+		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi and Lzip): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
 	}
 
 	if packing {
@@ -154,8 +154,10 @@ func unpackAction(ctx context.Context, command *cli.Command) error {
 
 func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 	options := pak.Options{Output: command.String("output"), Level: 3, Threads: runtime.GOMAXPROCS(0)}
-	maximum := packing && command.Bool("max")
+	options.Stdin = command.Reader
+	options.Stdout = command.Writer
 
+	maximum := packing && command.Bool("max")
 	threads := command.String("threads")
 
 	if maximum && !command.IsSet("threads") {

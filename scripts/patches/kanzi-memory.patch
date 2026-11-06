@@ -1,0 +1,165 @@
+--- a/src/entropy/BinaryEntropyEncoder.hpp
++++ b/src/entropy/BinaryEntropyEncoder.hpp
+@@ -23,6 +23,7 @@
+ 
+ namespace kanzi
+ {
++    class BinaryEntropyExpansion : public std::exception {};
+ 
+    // This class is a generic implementation of a bool entropy encoder
+    class BinaryEntropyEncoder FINAL : public EntropyEncoder
+@@ -41,6 +42,7 @@
+        bool _disposed;
+        bool _deallocate;
+        SliceArray<byte> _sba;
++       int _maxPayload = 0x7FFFFFFF;
+ 
+        void _dispose();
+ 
+--- a/src/entropy/BinaryEntropyEncoder.cpp
++++ b/src/entropy/BinaryEntropyEncoder.cpp
+@@ -62,11 +62,15 @@
+ 
+ void BinaryEntropyEncoder::ensureCapacity(int required)
+ {
++    if (required > _maxPayload)
++        throw BinaryEntropyExpansion();
++
+     if (required <= _sba._length)
+         return;
+ 
+     const int grownSize = _sba._length + max(_sba._length >> 2, 1 << 10);
+     int newSize = max(required, max(grownSize, 1024));
++    newSize = min(newSize, _maxPayload);
+     kanzi::byte* buf = new kanzi::byte[newSize];
+ 
+     if ((_sba._array != nullptr) && (_sba._index > 0))
+@@ -94,7 +98,9 @@
+ 
+     const uint extra = max(length >> 3, min(length, uint(1 << 16)));
+     const uint64 bufSize = uint64(length) + uint64(extra);
+-    ensureCapacity(int(min(bufSize, uint64(0x7FFFFFFF))));
++    // Once a single-chunk payload expands, the stream uses transformed copy.
++    _maxPayload = (count < MAX_CHUNK_SIZE) ? int(count) + 65536 : 0x7FFFFFFF;
++    ensureCapacity(int(min(bufSize, uint64(_maxPayload))));
+ 
+     // Split block into chunks, encode chunk and write bit array to bitstream
+     while (startChunk < end) {
+--- a/src/io/CompressedOutputStream.cpp
++++ b/src/io/CompressedOutputStream.cpp
+@@ -947,23 +947,30 @@
+             // Rebuild the entropy encoder to reset block statistics
+             ee = EntropyEncoderFactory::newEncoder(obs, _ctx, eType);
+ 
+-            // Entropy encode block
+-            if (ee->encode(_buffer->_array, 0, postTransformLength) != postTransformLength) {
+-                try {
+-                    DELETE_AND_NULL(EntropyEncoder, ee);
+-                }
+-                catch (...) {
++            bool expanded = false;
++            try {
++                // Entropy encode block
++                if (ee->encode(_buffer->_array, 0, postTransformLength) != postTransformLength) {
++                    try {
++                        DELETE_AND_NULL(EntropyEncoder, ee);
++                    }
++                    catch (...) {
++                    }
++
++                    storeProcessedBlockId(CompressedOutputStream::CANCEL_TASKS_ID);
++                    return T(blockId, Error::ERR_PROCESS_BLOCK, "Entropy coding failed");
+                 }
+-
+-                storeProcessedBlockId(CompressedOutputStream::CANCEL_TASKS_ID);
+-                return T(blockId, Error::ERR_PROCESS_BLOCK, "Entropy coding failed");
++            } catch (const BinaryEntropyExpansion&) {
++                expanded = true;
+             }
+ 
+             // Dispose before processing statistics (may write to the bitstream)
+             ee->dispose();
+             DELETE_AND_NULL(EntropyEncoder, ee);
+             obs.close();
+             written = obs.written();
++            if (expanded)
++                written = (uint64(postTransformLength) + 1) << 3;
+         }
+ 
+         // If not a copy block, check if entropy expanded the transformed block
+--- a/src/entropy/BinaryEntropyDecoder.hpp
++++ b/src/entropy/BinaryEntropyDecoder.hpp
+@@ -42,6 +42,7 @@
+        bool _deallocate;
+        SliceArray<byte> _sba;
+        uint _payloadEnd;
++       uint _maxEncodedSize;
+ 
+        void read();
+ 
+@@ -50,7 +51,7 @@
+        void _dispose() const {}
+ 
+    public:
+-       BinaryEntropyDecoder(InputBitStream& bitstream, Predictor* predictor, bool deallocate=true);
++       BinaryEntropyDecoder(InputBitStream& bitstream, Predictor* predictor, bool deallocate=true, uint maxEncodedSize=0x7FFFFFFF);
+ 
+        ~BinaryEntropyDecoder();
+ 
+--- a/src/entropy/BinaryEntropyDecoder.cpp
++++ b/src/entropy/BinaryEntropyDecoder.cpp
+@@ -30,7 +30,7 @@
+ const int BinaryEntropyDecoder::MAX_CHUNK_SIZE = 1 << 26;
+ 
+ 
+-BinaryEntropyDecoder::BinaryEntropyDecoder(InputBitStream& bitstream, Predictor* predictor, bool deallocate)
++BinaryEntropyDecoder::BinaryEntropyDecoder(InputBitStream& bitstream, Predictor* predictor, bool deallocate, uint maxEncodedSize)
+     : _predictor(predictor)
+     , _bitstream(bitstream)
+     , _deallocate(deallocate)
+@@ -43,6 +43,7 @@
+     _high = TOP;
+     _current = 0;
+     _payloadEnd = 0;
++    _maxEncodedSize = maxEncodedSize;
+ }
+ 
+ BinaryEntropyDecoder::~BinaryEntropyDecoder()
+@@ -99,7 +100,7 @@
+ 
+         const uint64 maxEncodedSize = min(uint64(chunkSize) << 5, uint64(uint(-1) >> 3));
+ 
+-        if (uint64(szBytes) > maxEncodedSize)
++        if (uint64(szBytes) > maxEncodedSize || szBytes > _maxEncodedSize)
+            return 0;
+ 
+         ensureCapacity(int(szBytes));
+--- a/src/entropy/EntropyDecoderFactory.hpp
++++ b/src/entropy/EntropyDecoderFactory.hpp
+@@ -80,13 +80,13 @@
+            return new FPAQDecoder(ibs);
+ 
+        case CM_TYPE:
+-           return new BinaryEntropyDecoder(ibs, new CMPredictor(&ctx));
++           return new BinaryEntropyDecoder(ibs, new CMPredictor(&ctx), true, ctx.getInt("maxEncodedSize", 0x7FFFFFFF));
+ 
+        case TPAQ_TYPE:
+-           return new BinaryEntropyDecoder(ibs, new TPAQPredictor<false>(&ctx));
++           return new BinaryEntropyDecoder(ibs, new TPAQPredictor<false>(&ctx), true, ctx.getInt("maxEncodedSize", 0x7FFFFFFF));
+ 
+        case TPAQX_TYPE:
+-           return new BinaryEntropyDecoder(ibs, new TPAQPredictor<true>(&ctx));
++           return new BinaryEntropyDecoder(ibs, new TPAQPredictor<true>(&ctx), true, ctx.getInt("maxEncodedSize", 0x7FFFFFFF));
+ 
+        case NONE_TYPE:
+            return new NullEntropyDecoder(ibs);
+--- a/src/io/CompressedInputStream.cpp
++++ b/src/io/CompressedInputStream.cpp
+@@ -1153,6 +1153,7 @@
+ 
+         const int savedIdx = _data->_index;
+         _ctx.putInt("size", preTransformLength);
++        _ctx.putInt("maxEncodedSize", int(encodedBlockBytes));
+ 
+         if (transformedCopy == true) {
+             // The encoder kept the transformed bytes verbatim because entropy

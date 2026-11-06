@@ -19,6 +19,7 @@ done < "$root/scripts/native.lock"
 cp "$root/.native/src/bzip3/LICENSE" "$bundle/licenses/LGPL-3.0.txt"
 cp "$root/.native/src/xz/COPYING.GPLv3" "$bundle/licenses/GPL-3.0.txt"
 cp "$root/.native/src/bzip3/3rdparty/libsais-LICENSE" "$bundle/licenses/libsais.txt"
+cp "$root/.native/src/kanzi/LICENSE" "$bundle/licenses/kanzi.txt"
 printf 'BZIP3 copyright (C) 2022-2024 Kamila Szewczyk; LGPLv3 or later.\nSee THIRD_PARTY.md for license notices, relinking permission and rebuilding instructions. Native notices are in the included source archives.\n' > "$bundle/licenses/NOTICE.txt"
 (cd "$bundle" && go mod vendor)
 (cd "$bundle/tools/toolchain" && go mod vendor)
