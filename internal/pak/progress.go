@@ -2,6 +2,7 @@ package pak
 
 import (
 	"io"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -16,16 +17,17 @@ const (
 )
 
 type Progress struct {
-	bytes    atomic.Int64
-	files    atomic.Int64
-	mutex    sync.Mutex
-	phase    string
-	total    int64
-	log      *minimal.Minimal
-	output   io.Writer
-	done     chan struct{}
-	finished chan struct{}
-	started  time.Time
+	bytes        atomic.Int64
+	files        atomic.Int64
+	mutex        sync.Mutex
+	phase        string
+	total        int64
+	log          *minimal.Minimal
+	output       io.Writer
+	done         chan struct{}
+	finished     chan struct{}
+	started      time.Time
+	phaseStarted time.Time
 }
 
 func (progress *Progress) Add(count int) {
@@ -50,6 +52,7 @@ func (progress *Progress) Phase(phase string, total int64) {
 
 	if total >= 0 {
 		progress.total = total
+		progress.phaseStarted = time.Now()
 	}
 
 	progress.mutex.Unlock()
@@ -122,7 +125,7 @@ func (progress *Progress) render() {
 	buffer := make([]byte, 0, 256)
 
 	for {
-		buffer = progress.line(buffer[:0])
+		buffer = progress.line(buffer[:0], time.Now())
 		_, _ = progress.output.Write(buffer)
 
 		select {
@@ -135,10 +138,11 @@ func (progress *Progress) render() {
 	}
 }
 
-func (progress *Progress) line(buffer []byte) []byte {
+func (progress *Progress) line(buffer []byte, now time.Time) []byte {
 	progress.mutex.Lock()
 	phase := progress.phase
 	total := progress.total
+	started := progress.phaseStarted
 	progress.mutex.Unlock()
 
 	buffer = append(buffer, "\r\x1b[2K["...)
@@ -171,11 +175,21 @@ func (progress *Progress) line(buffer []byte) []byte {
 		buffer = append(buffer, "  "...)
 	}
 
-	rate := float64(count) / time.Since(progress.started).Seconds() / (1 << 20)
+	var rate float64
 
-	buffer = strconv.AppendFloat(buffer, rate, 'f', 1, 64)
+	elapsed := now.Sub(started).Seconds()
+	if elapsed > 0 {
+		rate = float64(count) / elapsed
+	}
+
+	buffer = strconv.AppendFloat(buffer, rate/(1<<20), 'f', 1, 64)
 	buffer = append(buffer, " mib/s  "...)
 	buffer = appendEntries(buffer, progress.files.Load())
+
+	if total > 0 && phase != "finish" {
+		buffer = append(buffer, "  eta "...)
+		buffer = appendETA(buffer, max(total-count, 0), rate)
+	}
 
 	return buffer
 }
@@ -185,7 +199,8 @@ func NewProgress(log *minimal.Minimal, output io.Writer, phase string) *Progress
 		return nil
 	}
 
-	progress := &Progress{log: log, output: output, phase: phase, started: time.Now()}
+	now := time.Now()
+	progress := &Progress{log: log, output: output, phase: phase, started: now, phaseStarted: now}
 
 	if output != nil {
 		progress.done = make(chan struct{})
@@ -195,6 +210,36 @@ func NewProgress(log *minimal.Minimal, output io.Writer, phase string) *Progress
 	}
 
 	return progress
+}
+
+func appendETA(buffer []byte, remaining int64, rate float64) []byte {
+	if remaining == 0 {
+		return append(buffer, "0s"...)
+	}
+
+	if rate <= 0 {
+		return append(buffer, "--"...)
+	}
+
+	estimate := math.Ceil(float64(remaining) / rate)
+	if estimate >= math.MaxInt64 {
+		return append(buffer, "--"...)
+	}
+
+	seconds := int64(estimate)
+	if seconds >= 3600 {
+		buffer = strconv.AppendInt(buffer, seconds/3600, 10)
+		buffer = append(buffer, "h "...)
+	}
+
+	if seconds >= 60 {
+		buffer = strconv.AppendInt(buffer, seconds/60%60, 10)
+		buffer = append(buffer, "m "...)
+	}
+
+	buffer = strconv.AppendInt(buffer, seconds%60, 10)
+
+	return append(buffer, 's')
 }
 
 func appendSize(buffer []byte, size int64) []byte {
