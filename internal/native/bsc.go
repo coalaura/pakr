@@ -4,6 +4,7 @@ package native
 #include <stdlib.h>
 #include <libbsc/libbsc.h>
 #include <libbsc/filters.h>
+#include "bsc.h"
 */
 import "C"
 
@@ -52,6 +53,7 @@ type BSCReader struct {
 
 type bscSettings struct {
 	block    int
+	packed   int
 	coder    int
 	hash     int
 	match    int
@@ -69,12 +71,14 @@ type bscEntry struct {
 }
 
 type bscSlot struct {
-	input  []byte
-	output []byte
-	entry  bscEntry
-	work   chan struct{}
-	done   chan struct{}
-	err    error
+	workspace *C.pakr_bsc_workspace
+	input     []byte
+	output    []byte
+	entry     bscEntry
+	work      chan struct{}
+	done      chan struct{}
+	err       error
+	last      bool
 }
 
 type bscBlocks struct {
@@ -103,7 +107,7 @@ var (
 	}
 
 	bscInitialize = sync.OnceValue(func() error {
-		return bscError("initialize", int(C.bsc_init(bscFeatures)))
+		return bscError("initialize", int(C.pakr_bsc_init(bscFeatures)))
 	})
 
 	bscMemoryBudget = membudget.Resolve
@@ -308,6 +312,7 @@ func (reader *BSCReader) Read(data []byte) (int, error) {
 		for blocks.used < len(blocks.slots) && reader.next < len(reader.index) {
 			slot := &blocks.slots[(blocks.head+blocks.used)%len(blocks.slots)]
 			slot.entry = reader.index[reader.next]
+			slot.last = reader.next+len(blocks.slots) >= len(reader.index)
 
 			reader.next++
 
@@ -411,6 +416,17 @@ func (blocks *bscBlocks) run(slot *bscSlot) {
 
 func (blocks *bscBlocks) process(slot *bscSlot) {
 	slot.err = context.Cause(blocks.ctx)
+	if slot.err == nil && slot.workspace == nil && !slot.last {
+		// Leave room for both Go buffers, growth overlap and preprocessing scratch
+		// alongside retained native allocations within the existing worker budget.
+		scratch := uint64(blocks.settings.block)*5 + bscReserve/2 + (uint64(4) << blocks.settings.hash)
+
+		slot.workspace = C.pakr_bsc_create(C.size_t(scratch))
+		if slot.workspace == nil {
+			slot.err = bscError("workspace", C.LIBBSC_NOT_ENOUGH_MEMORY)
+		}
+	}
+
 	if slot.err == nil {
 		if blocks.source == nil {
 			slot.err = blocks.compress(slot)
@@ -421,6 +437,11 @@ func (blocks *bscBlocks) process(slot *bscSlot) {
 
 	if slot.err != nil {
 		blocks.cancel(slot.err)
+	}
+
+	if slot.last {
+		C.pakr_bsc_destroy(slot.workspace)
+		slot.workspace = nil
 	}
 }
 
@@ -467,7 +488,7 @@ func (blocks *bscBlocks) compress(slot *bscSlot) error {
 
 	// The separate input is preserved even when compression destroys its output.
 	// Stored preprocessed data retains metadata so the reader reverses it too.
-	result := int(C.bsc_compress(input, output, C.int(original), C.int(settings.hash), C.int(settings.match), C.LIBBSC_BLOCKSORTER_BWT, C.int(settings.coder), bscFeatures))
+	result := int(C.pakr_bsc_compress(slot.workspace, input, output, C.int(original), C.int(settings.hash), C.int(settings.match), C.int(settings.coder), bscFeatures))
 	if result == C.LIBBSC_NOT_COMPRESSIBLE {
 		result = int(C.bsc_store(input, output, C.int(original), bscFeatures))
 	}
@@ -484,7 +505,7 @@ func (blocks *bscBlocks) compress(slot *bscSlot) error {
 func (blocks *bscBlocks) decompress(slot *bscSlot) error {
 	if slot.input == nil {
 		// Fixed slot capacities avoid retaining successively larger Go allocations.
-		slot.input = make([]byte, blocks.settings.block+bscHeaderSize)
+		slot.input = make([]byte, blocks.settings.packed)
 		slot.output = make([]byte, blocks.settings.block)
 	}
 
@@ -507,7 +528,7 @@ func (blocks *bscBlocks) decompress(slot *bscSlot) error {
 	input := (*C.uchar)(unsafe.Pointer(unsafe.SliceData(data)))
 	output := (*C.uchar)(unsafe.Pointer(unsafe.SliceData(slot.output)))
 
-	result := int(C.bsc_decompress(input, C.int(packed), output, C.int(original), bscFeatures))
+	result := int(C.pakr_bsc_decompress(slot.workspace, input, C.int(packed), output, C.int(original), bscFeatures))
 	if result != 0 {
 		return bscError("decompress", result)
 	}
@@ -542,6 +563,11 @@ func (blocks *bscBlocks) close() {
 
 	// Native calls finish before their worker-local buffers are released.
 	blocks.wait.Wait()
+
+	for index := range blocks.slots {
+		C.pakr_bsc_destroy(blocks.slots[index].workspace)
+	}
+
 	blocks.slots = nil
 }
 
@@ -651,6 +677,7 @@ func NewBSCReader(ctx context.Context, source io.ReaderAt, size int64, threads i
 		position += 10 + int64(packed)
 
 		settings.block = max(settings.block, original)
+		settings.packed = max(settings.packed, packed)
 		settings.hash = max(settings.hash, hash)
 	}
 

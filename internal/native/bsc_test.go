@@ -106,6 +106,46 @@ func TestBSCIncompressible(t *testing.T) {
 	}
 }
 
+func TestBSCWorkspaceReuse(t *testing.T) {
+	levels := []int{1, 3, 6, 3, 1, 6, 1, 3, 6}
+	sizes := []int{256 << 10, 2 << 20, 1 << 20, 64 << 10, 1 << 20, 3 << 20, 128 << 10, 2 << 20, 1 << 20}
+
+	expected := make([]byte, 0, 12<<20)
+	encoded := make([]byte, 8, 13<<20)
+
+	copy(encoded, "bsc1")
+	binary.LittleEndian.PutUint32(encoded[4:], uint32(len(levels)))
+
+	random := rand.New(rand.NewPCG(1729, 340))
+
+	for index, level := range levels {
+		data := testData(sizes[index])
+
+		if index%3 == 1 {
+			for position := range data {
+				data[position] = byte(random.Uint32())
+			}
+		}
+
+		block := encodeBSC(t, data, level, 1, len(data))[8:]
+		binary.LittleEndian.PutUint64(block, uint64(len(expected)))
+
+		encoded = append(encoded, block...)
+		expected = append(expected, data...)
+	}
+
+	workers := []int{1, 4, 16}
+
+	for _, threads := range workers {
+		t.Run(strconv.Itoa(threads), func(t *testing.T) {
+			actual := decodeBSC(t, encoded, threads)
+			if !bytes.Equal(actual, expected) {
+				t.Fatal("workspace reuse across block sizes, coders and stored blocks changed output")
+			}
+		})
+	}
+}
+
 func TestBSCOfficialFixtures(t *testing.T) {
 	// Pristine official 3.4.0: -e0/-e1/-e2 -cp -T1, including preceding contexts.
 	fixtures := []string{

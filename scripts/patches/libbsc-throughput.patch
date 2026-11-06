@@ -1,0 +1,78 @@
+--- a/libbsc/libbsc/bounds.h
++++ b/libbsc/libbsc/bounds.h
+@@ -1,4 +1,6 @@
++#include "../coder/qlfc/qlfc.h"
++
+ // Bounds checks for untrusted CLI blocks. Wire representation is unchanged.
+-thread_local const unsigned char * bsc_input_end = NULL;
+-thread_local unsigned char * bsc_output_end = NULL;
+-thread_local bool bsc_input_error = false;
++LIBBSC_THREAD_LOCAL const unsigned char * bsc_input_end = NULL;
++LIBBSC_THREAD_LOCAL unsigned char * bsc_output_end = NULL;
++LIBBSC_THREAD_LOCAL bool bsc_input_error = false;
+--- a/libbsc/platform/platform.h
++++ b/libbsc/platform/platform.h
+@@ -38,3 +38,10 @@
+-extern thread_local const unsigned char * bsc_input_end;
+-extern thread_local unsigned char * bsc_output_end;
+-extern thread_local bool bsc_input_error;
++// These POD bounds have constant initialization. Avoid dynamic TLS initializer
++// checks on every range-decoder read in translation units using the externs.
++#if defined(_MSC_VER)
++#define LIBBSC_THREAD_LOCAL __declspec(thread)
++#else
++#define LIBBSC_THREAD_LOCAL __thread
++#endif
++extern LIBBSC_THREAD_LOCAL const unsigned char * bsc_input_end;
++extern LIBBSC_THREAD_LOCAL unsigned char * bsc_output_end;
++extern LIBBSC_THREAD_LOCAL bool bsc_input_error;
+--- a/libbsc/libbsc/libbsc.cpp
++++ b/libbsc/libbsc/libbsc.cpp
+@@ -625,2 +625,10 @@
++    // Reuse the model across bounded chunks, as the upstream serial decoder does.
++    void * model = NULL;
+     int lzSize = bsc_decode_chunks(input + LIBBSC_HEADER_SIZE, codedSize, output, dataSize,
+-        [coder](const unsigned char * source, const unsigned char *, unsigned char * target) { return bsc_coder_decode_block(source, target, coder); });
++        [coder, &model](const unsigned char * source, const unsigned char *, unsigned char * target)
++        {
++            if (model == NULL) model = bsc_malloc(bsc_qlfc_model_size(coder));
++            if (model == NULL) return LIBBSC_NOT_ENOUGH_MEMORY;
++            return bsc_qlfc_decode_block_model(source, target, coder, model);
++        });
++    bsc_free(model);
+@@ -667,4 +675,14 @@
+             bsc_memcpy(buffer, output, lzSize, features);
++            int * table = NULL;
++            size_t tableSize = ((size_t)1 << lzpHashSize) * sizeof(int);
+             result = bsc_decode_chunks(buffer, lzSize, output, dataSize,
+-                [lzpHashSize, lzpMinLen](const unsigned char * source, const unsigned char * end, unsigned char * target) { return bsc_lzp_decode_block(source, end, target, NULL, lzpHashSize, lzpMinLen); });
++                [lzpHashSize, lzpMinLen, tableSize, &table](const unsigned char * source, const unsigned char * end, unsigned char * target)
++                {
++                    if (table == NULL) table = (int *)bsc_malloc(tableSize);
++                    if (table == NULL) return LIBBSC_NOT_ENOUGH_MEMORY;
++                    // Each chunk has an independent dictionary, but shares its storage.
++                    memset(table, 0, tableSize);
++                    return bsc_lzp_decode_block(source, end, target, table, lzpHashSize, lzpMinLen);
++                });
++            bsc_free(table);
+             if (result == dataSize) adler32_lzp = bsc_adler32(output, dataSize, features);
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -159,1 +159,17 @@
++# Keep the baseline portable and use libbsc's CPUID/OSXSAVE-checked dispatch.
++option(BSC_ENABLE_CPU_DISPATCH "Build portable x86 runtime CPU variants" OFF)
++if(BSC_ENABLE_CPU_DISPATCH AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
++  target_compile_definitions(libbsc PRIVATE LIBBSC_DYNAMIC_CPU_DISPATCH)
++  foreach(isa ssse3 sse4.1 avx avx2 avx512bw)
++    add_library(bsc_${isa} OBJECT libbsc/adler32/adler32.cpp libbsc/coder/qlfc/qlfc.cpp)
++    target_compile_definitions(bsc_${isa} PRIVATE LIBBSC_DYNAMIC_CPU_DISPATCH)
++    target_compile_options(bsc_${isa} PRIVATE -m${isa})
++    if(isa STREQUAL "avx512bw")
++      target_compile_options(bsc_${isa} PRIVATE -mavx512vl -mavx512dq -mavx512cd)
++    endif()
++    set_target_properties(bsc_${isa} PROPERTIES POSITION_INDEPENDENT_CODE ON)
++    target_sources(libbsc PRIVATE $<TARGET_OBJECTS:bsc_${isa}>)
++  endforeach()
++endif()
++
+ if(BSC_BUILD_SHARED_LIB)
