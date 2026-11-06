@@ -464,8 +464,6 @@ Temporary inputs and outputs are removed automatically. Process-level measuremen
 
 ## TODOs
 
-- Add [BSC](https://github.com/IlyaGrebnov/libbsc) support.
-- Add [Kanzi](https://github.com/flanglet/kanzi-cpp) support (LZ, BWT, ROLZ).
 - Add CAB extraction.
 - Add ISO9660 extraction.
 - Add WIM / ESD extraction.
