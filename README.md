@@ -6,6 +6,8 @@
 
 A single-binary CLI for packing and unpacking archives, with native compression, consistent flags and concise progress output.
 
+[Installation](#installation) | [Quick start](#quick-start) | [Usage](#usage) | [Formats](#formats) | [Performance and memory](#performance-and-memory) | [Building](#building-from-source)
+
 ## Installation
 
 Download binaries for **Linux, Windows and macOS**, in **amd64 and arm64**, from [GitHub Releases](https://github.com/coalaura/pakr/releases).
@@ -18,9 +20,11 @@ curl -fsSL https://src.ws2.sh/pakr/install.sh | sh
 
 The installer detects your platform, verifies the release's SHA-256 checksum and installs to `/usr/local/bin/pakr`, using `sudo` when needed. It requires `curl` and either `sha256sum` or `shasum`.
 
-For manual installation, choose `pakr-<os>-<arch>` (`darwin` for macOS), make it executable and place it on your `PATH`. On Windows, download `pakr-windows-<arch>.exe` and rename it to `pakr.exe`. Releases include a `SHA256SUMS` file.
+### Manual installation
 
-## Usage
+Choose `pakr-<os>-<arch>` (`darwin` for macOS), make it executable and place it on your `PATH` as `pakr`. On Windows, download `pakr-windows-<arch>.exe` and rename it to `pakr.exe`. Releases include a `SHA256SUMS` file.
+
+## Quick start
 
 ```sh
 # Pack files and directories.
@@ -39,6 +43,8 @@ pakr pack project -f tar.zst -o - | pakr unpack - -f tar.zst -o restored
 pakr --version
 ```
 
+## Usage
+
 ### Packing
 
 `pakr pack <paths...>` infers the format from the output filename or defaults to `tar.zst`. Without an output path, it writes `archive.<format>`. Directories retain their basename; passing `.` archives the current directory's contents.
@@ -51,30 +57,54 @@ Raw compression formats such as `gz` accept exactly one regular file. Use a cont
 
 Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR and 7z require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input.
 
-Extraction defaults to at most 16 TiB of total payload, 1 TiB per file and 10 million entries, including directories and links. Adjust these with `--max-output`, `--max-file-size` and `--max-entries`; `0` disables the corresponding limit. Byte limits accept integer bytes or `KiB`, `MiB`, `GiB` and `TiB` suffixes, for example `pakr unpack backup.zip -o restored --max-output 32TiB --max-file-size 2TiB`. Declared sizes are checked before extraction and streams without sizes are checked as they produce output. ZIP workers share one budget. Exceeding a limit cancels extraction and removes incomplete files; already completed entries remain. Payload limits exclude container headers/padding and do not impose a whole-process RSS limit on native decoders or metadata.
+### Extraction limits
+
+| Flag | Default | Limits |
+| --- | --- | --- |
+| `--max-output` | `16TiB` | Total extracted payload |
+| `--max-file-size` | `1TiB` | Payload per file |
+| `--max-entries` | `10000000` | Entries, including directories and links |
+
+Set a limit to `0` to disable it. Byte limits accept integer bytes or `KiB`, `MiB`, `GiB` and `TiB` suffixes.
+
+```sh
+pakr unpack backup.zip -o restored --max-output 32TiB --max-file-size 2TiB
+```
+
+Declared sizes are checked before extraction; streams without sizes are checked as they produce output. ZIP workers share one budget. Exceeding a limit cancels extraction and removes incomplete files; already completed entries remain.
+
+Payload limits exclude container headers and padding. They do not impose a whole-process memory (RSS) limit on native decoders or metadata.
 
 ### Options
 
 Flags may follow input paths.
+
+#### Common options
 
 | Flag | Description |
 | --- | --- |
 | `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory when unpacking |
 | `-f`, `--format` | Explicit format or alias |
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
-| `-l`, `--level` | Compression effort: 1-9, default 3; packing only |
-| `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
-| `--max` | Maximum practical effort: all logical CPUs within codec resource budgets, level 9 and XZ's extreme preset; explicit `--threads`, `--level` or `--preset` settings override their respective defaults regardless of argument order; packing only |
-| `--seekable` | Opt-in official seekable Zstandard output for `zst` and `tar.zst`; packing only |
-| `--memory` | Codec allocation budget for packing and unpacking (BZIP3 and Lzip): `auto` (default) or positive bytes / a `KiB`, `MiB`, `GiB`, `TiB` size |
-| `--max-output` | Total extracted payload limit, default `16TiB`; unpacking only |
-| `--max-file-size` | Individual extracted file limit, default `1TiB`; unpacking only |
-| `--max-entries` | Archive entry limit, default `10000000` (10 mil); unpacking only |
+| `--memory` | BZIP3 / Lzip codec allocation budget: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
 
-`--threads auto` follows Go's concurrency setting (`GOMAXPROCS`), while `--threads all` uses all logical CPUs visible to the process. Both are capped at 256 workers.
+`--threads auto` follows Go's concurrency setting (`GOMAXPROCS`); `--threads all` uses all logical CPUs visible to the process. Both are capped at 256 workers.
+
+#### Packing options
+
+| Flag | Description |
+| --- | --- |
+| `-l`, `--level` | Compression effort: 1-9, default 3 |
+| `-p`, `--preset` | `fast` (1), `balanced` (3) or `best` (9); exclusive with `--level` |
+| `--max` | All logical CPUs within codec budgets, level 9 and XZ's extreme preset |
+| `--seekable` | Official seekable Zstandard output for `zst` and `tar.zst` |
+
+Explicit `--threads`, `--level` or `--preset` settings override their respective `--max` defaults regardless of argument order. Explicit `--level 9` or `--preset best` also overrides XZ's extreme setting.
+
+Unpacking-specific flags are listed under [Extraction limits](#extraction-limits).
 
 ## Formats
 
@@ -94,13 +124,64 @@ Flags may follow input paths.
 | `7z` | libarchive with LZMA2 | libarchive |
 | `br`, `brotli` | libbrotlienc | libbrotlidec |
 
-Every raw codec can be combined with tar: `tar.gz`, `tar.zst`, `tar.bz2`, `tar.bz3`, `tar.xz`, `tar.lz`, `tar.lz4` and `tar.br`. Aliases include `tgz`, `tbz`, `tbz2`, `tbz3`, `txz`, `tlz` and `tzst`. Lzip (`.lz` or `.lzip`) is distinct from XZ, LZ4 and legacy `.lzma`. `lzma2` selects an XZ container, not a headerless LZMA2 stream or legacy `.lzma` file. Use `pakr pack file -o file.lz`, `pakr pack directory -o backup.tar.lz` or `pakr pack directory -f tlz -o - | pakr unpack - -f tar.lz -o restored`.
+### Tar combinations and aliases
 
-ZIPX is an extended ZIP container. Both `.zip` and `.zipx` accept Store (0), Deflate (8), BZIP2 (12), LZMA (14), ZSTD (93), XZ (95) and PPMd (98), including mixed-method archives. Store/Deflate entries retain the optimized parallel ZIP path; advanced entries use libarchive sequentially after central-directory path and size preflight. Unsupported methods, including Deflate64, MP3 (94), JPEG (96) and WavPack (97), fail explicitly. Encrypted entries are rejected. ZIP64 and self-extracting ZIP offsets are supported where the underlying readers accept them; advanced-method symbolic links are limited to those libarchive can decode.
+Every raw codec can be combined with tar:
 
-RAR versions are detected from their signatures; use `pakr unpack archive.rar -o restored` or `pakr unpack - -f rar -o restored`. Single-volume RAR4/RAR5 files, directories, Unicode names and supported links are extracted with available permissions and modification times. Compatibility is limited by libarchive: encrypted archives, multipart/split volumes, RAR4 solid compression and unsupported RAR5 solid variants fail. Neighboring volumes are never opened. An end header is required to detect truncation, so legacy RAR4 archives without one are rejected. RAR4 names without a Unicode field are interpreted as UTF-8; legacy OEM codepages are not supported. ZIPX and RAR creation is rejected whether selected with `-f` or inferred from the output filename.
+| Format | Short aliases |
+| --- | --- |
+| `tar.gz` | `tgz` |
+| `tar.zst` | `tzst` |
+| `tar.bz2` | `tbz`, `tbz2` |
+| `tar.bz3` | `tbz3` |
+| `tar.xz` | `txz` |
+| `tar.lz` | `tlz` |
+| `tar.lz4` | - |
+| `tar.br` | - |
 
-Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded. Gzip uses parallel, independent 1 MiB members in a standard concatenated stream. Gzip and ZIP compression cap in-flight workers at 16 to bound buffering.
+Lzip (`.lz` or `.lzip`) is distinct from XZ, LZ4 and legacy `.lzma`. The `lzma2` alias selects an XZ container, not a headerless LZMA2 stream or legacy `.lzma` file. BZIP2 and BZIP3 are also distinct formats.
+
+### ZIPX and RAR compatibility
+
+ZIPX and RAR are extraction-only. Creation is rejected whether selected with `-f` or inferred from the output filename.
+
+<details>
+<summary>ZIP / ZIPX methods and limitations</summary>
+
+ZIPX is an extended ZIP container. Both `.zip` and `.zipx` accept Store (0), Deflate (8), BZIP2 (12), LZMA (14), ZSTD (93), XZ (95) and PPMd (98), including mixed-method archives.
+
+Store/Deflate entries use the optimized parallel ZIP path. Advanced entries use libarchive sequentially after central-directory path and size preflight.
+
+Unsupported methods, including Deflate64, MP3 (94), JPEG (96) and WavPack (97), fail explicitly. Encrypted entries are rejected. ZIP64 and self-extracting ZIP offsets are supported where the underlying readers accept them; advanced-method symbolic links are limited to those libarchive can decode.
+
+</details>
+
+<details>
+<summary>RAR versions and limitations</summary>
+
+```sh
+pakr unpack archive.rar -o restored
+pakr unpack - -f rar -o restored
+```
+
+Versions are detected from their signatures. Single-volume RAR4/RAR5 files, directories, Unicode names and supported links are extracted with available permissions and modification times.
+
+Compatibility is limited by libarchive: encrypted archives, multipart/split volumes, RAR4 solid compression and unsupported RAR5 solid variants fail. Neighboring volumes are never opened.
+
+An end header is required to detect truncation, so legacy RAR4 archives without one are rejected. RAR4 names without a Unicode field are interpreted as UTF-8; legacy OEM codepages are not supported.
+
+</details>
+
+## Performance and memory
+
+Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
+
+`--memory` applies to BZIP3 and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside them.
+
+### Compression levels
+
+<details>
+<summary>Native settings for levels 1-9</summary>
 
 The public levels 1 through 9 select these native settings (3 remains the balanced default):
 
@@ -117,23 +198,130 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | Lzip dictionary (MiB) | 1, 1.5, 2, 3, 4, 8, 16, 24, 32 |
 | Lzip nice match length | 32, 32, 32, 32, 32, 64, 128, 163, 273 |
 
-Zero and negative settings in this table still compress; they do not select store mode. Zstandard -3 and LZ4 acceleration 5 (frame level -4) are practical fast endpoints, rather than their much broader acceleration limits. Explicit `--level 9` or `--preset best` overrides `--max`'s XZ extreme setting. Libarchive's LZMA2 writer and Brotli are single-threaded.
+Zero and negative settings still compress; they do not select store mode. Zstandard -3 and LZ4 acceleration 5 (frame level -4) are practical fast endpoints, rather than their much broader acceleration limits.
 
-Ordinary ZIP entries up to 8 MiB use reusable libdeflate contexts; larger entries stream through zlib-ng. ZIP extraction validates conflicting paths before dispatching independent files and creates ordinary ZIP symlinks after file workers finish. Zstandard and XZ reduce native encoder worker counts using a 2 GiB memory estimate; BZIP2 and LZ4 bound worker buffers/state to approximately 256 MiB. These are codec working-memory budgets, not whole-process RSS guarantees; archive metadata, parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside these budgets. XZ decoding permits up to 2 GiB and reduces parallelism above 512 MiB; ordinary Zstandard decoding limits windows to 1 GiB.
+</details>
 
-`--memory auto` resolves a fresh budget when a BZIP3 or Lzip encoder or decoder is initialized: one quarter of the smallest reliable available-memory estimate, capped at 8 GiB. This leaves approximately 75% for the OS, other processes and allocations outside the codec budget. If every probe fails, the fallback is 256 MiB; a detected low value, including zero, is never raised to a minimum. For example, 512 MiB of headroom gives a 128 MiB budget, 4 GiB gives 1 GiB and 64 GiB gives the capped 8 GiB. Explicit sizes bypass detection. Other codecs retain the fixed budgets described above and do not probe memory.
+### Automatic memory budgets
 
-Linux uses physical `MemAvailable` and remaining cgroup v1/v2 memory limits, resolving the process's membership, mount paths and applicable visible ancestors; swap is excluded. Windows uses available physical RAM, available commit and queryable Job Object process/job limits, conservatively subtracting peak job-accounted usage. macOS uses free and inactive VM pages, falls back to free pages under reported memory pressure and considers measurable address-space limits. Inaccessible limits, cgroup ancestors hidden by a namespace/mount and unqueryable ancestor Windows jobs cannot be accounted for. These are snapshots: concurrent allocations, changing limits and imperfect reclaimability estimates mean the budget is not a hard process-memory limit or a guarantee against OOM.
+For BZIP3 and Lzip, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
 
-BZIP3 uses the official `BZ3v1` format: a 9-byte file header and ordered, CRC-checked independent blocks. Encoding and decoding reuse one native state and one in-place buffer per active worker, with bounded queues and deterministic output. Each worker reserves `bz3_min_memory_needed(block) + bz3_bound(block) + 2*block + 1MiB`, plus a shared 1 MiB allowance. This includes worst-case libsais scratch and queued results. Workers are reduced to fit the resolved budget, but the requested block size is never silently reduced. If one worker cannot fit, initialization fails before native state allocation and reports the required and available budget. Level 9 or `--max` needs approximately 4.02 GiB even for one worker; where appropriate, override automatic selection with, for example, `pakr pack data -f bz3 --max --memory 8GiB`. The decoder applies the same preflight to the file's declared block size. Direct BZIP3 API calls with a zero memory argument use the same automatic policy.
+| Available memory | Codec budget |
+| --- | --- |
+| 512 MiB | 128 MiB |
+| 4 GiB | 1 GiB |
+| 64 GiB | 8 GiB (cap) |
 
-Empty BZIP3 output is just a header. Inputs of at most 65 KiB declare a 65 KiB block and use at most one worker, avoiding large decoder allocations; the requested level's budget is still checked first. Larger inputs retain the selected block size. Native block operations finish before cancellation can reclaim their state; blocking input/output also depends on the underlying stream. Incomplete headers/blocks, invalid lengths and CRC failures are rejected. The format has no end marker or total-length field, so truncation exactly between complete blocks cannot be detected. BZIP2 and BZIP3 are distinct formats.
+This leaves approximately 75% for the OS, other processes and allocations outside the codec budget. If every probe fails, the fallback is 256 MiB; a detected low value, including zero, is never raised to a minimum.
 
-Lzip uses fixed `lc=3`, `lp=0`, `pb=2`, fast mode with HC3 at level 1, fast mode with HC4 at level 2, and normal mode with BT4 at levels 3-9; liblzma selects match-search depth automatically. `--preset` selects the usual normalized level; `--max` selects level 9 without an additional Lzip extreme mode. Encoding produces one member and remains single-threaded. Known raw input sizes cap dictionaries at the smallest representable size covering the input, at least 4 KiB, without limiting useful history; unknown-size streams and TAR retain the selected dictionary. Encoder and decoder estimates from liblzma, plus a 4 MiB streaming allowance, must fit `--memory` before expensive native allocations. Settings are never reduced to fit the budget; failure reports required and available bytes. Each concatenated member is checked against the same decoder budget, with legal dictionaries from 4 KiB through 512 MiB. Headers must be version 1, payloads must terminate with the LZMA1 end marker, and CRC32, uncompressed size and compressed member size must match. Truncation and trailing garbage are errors, including after TAR's end marker. Cancellation is checked between bounded native steps; blocking I/O still depends on the underlying stream.
+Explicit sizes such as `--memory 8GiB` bypass detection. Other codecs do not probe memory.
 
-`--seekable` writes independent 8 MiB Zstandard frames followed by the official seek table. Ordinary Zstandard tools can decode the result. Encoder contexts and native workers are reused between frames. Pakr detects the table in files and decodes frames with reusable contexts and up to eight workers, reducing concurrency to keep retained frame buffers within 256 MiB. Single-worker buffered decoding avoids worker goroutines; piped input still decodes sequentially. The writer spools only the seek index to a temporary file. External frames with compressed or decoded sizes above 65 MiB use sequential streaming. Independent frames can reduce compression ratio and ordinary Zstandard can still be faster, so seekable output remains opt-in.
+<details>
+<summary>Platform memory detection and limitations</summary>
 
-Packing retains one metadata record per entry for deterministic ordering, complete preflight checks and accurate progress totals. A single input tree does not need a separate duplicate-path set; multiple input roots retain that check. Collection remains proportional to entry count rather than using a second traversal or disk-backed index.
+- **Linux:** physical `MemAvailable` and remaining cgroup v1/v2 memory limits, resolving process membership, mount paths and applicable visible ancestors. Swap is excluded.
+- **Windows:** available physical RAM, available commit and queryable Job Object process/job limits, conservatively subtracting peak job-accounted usage.
+- **macOS:** free and inactive VM pages, falling back to free pages under reported memory pressure, plus measurable address-space limits.
+
+Inaccessible limits, cgroup ancestors hidden by a namespace/mount and unqueryable ancestor Windows jobs cannot be accounted for.
+
+These are snapshots, not a hard process-memory limit or a guarantee against OOM. Concurrent allocations, changing limits and imperfect reclaimability estimates can affect available memory.
+
+</details>
+
+### Codec details
+
+<details>
+<summary>Worker limits, fixed budgets and archive metadata</summary>
+
+| Codec / operation | Behavior |
+| --- | --- |
+| Gzip compression | Parallel, independent 1 MiB members in a standard concatenated stream; at most 16 in-flight workers |
+| ZIP compression | At most 16 in-flight workers; ordinary entries up to 8 MiB use reusable libdeflate contexts, larger entries stream through zlib-ng |
+| Zstandard / XZ encoding | Native worker counts reduced using a 2 GiB memory estimate |
+| BZIP2 / LZ4 | Worker buffers and state bounded to approximately 256 MiB |
+| XZ decoding | Up to 2 GiB; parallelism reduced above 512 MiB |
+| Ordinary Zstandard decoding | Decoder windows limited to 1 GiB |
+| Libarchive LZMA2 / Brotli encoding | Single-threaded |
+
+ZIP extraction validates conflicting paths before dispatching independent files. Ordinary ZIP symlinks are created after file workers finish.
+
+Packing retains one metadata record per entry for deterministic ordering, complete preflight checks and accurate progress totals. A single input tree does not need a separate duplicate-path set; multiple input roots retain that check. Collection remains proportional to entry count, without a second traversal or disk-backed index.
+
+</details>
+
+<details>
+<summary>BZIP3 blocks, memory requirements and validation</summary>
+
+BZIP3 uses the official `BZ3v1` format: a 9-byte file header and ordered, CRC-checked independent blocks.
+
+**Memory and workers**
+
+Encoding and decoding reuse one native state and one in-place buffer per active worker, with bounded queues and deterministic output. Each worker reserves `bz3_min_memory_needed(block) + bz3_bound(block) + 2*block + 1MiB`, plus a shared 1 MiB allowance. This includes worst-case libsais scratch and queued results.
+
+Workers are reduced to fit the budget; the requested block size is never silently reduced. If one worker cannot fit, initialization fails before native state allocation and reports required and available memory. The decoder applies the same preflight to the file's declared block size. Direct BZIP3 API calls with a zero memory argument use the automatic policy.
+
+Level 9 or `--max` needs approximately **4.02 GiB even for one worker**. Where appropriate, override automatic selection:
+
+```sh
+pakr pack data -f bz3 --max --memory 8GiB
+```
+
+**Small inputs**
+
+Empty output is just a header. Inputs of at most 65 KiB declare a 65 KiB block and use at most one worker, avoiding large decoder allocations; the requested level's budget is still checked first. Larger inputs retain the selected block size.
+
+**Validation and cancellation**
+
+Incomplete headers/blocks, invalid lengths and CRC failures are rejected. The format has no end marker or total-length field, so truncation exactly between complete blocks cannot be detected.
+
+Native block operations finish before cancellation can reclaim their state. Blocking I/O also depends on the underlying stream.
+
+</details>
+
+<details>
+<summary>Lzip encoding, dictionaries and validation</summary>
+
+```sh
+pakr pack file -o file.lz
+pakr pack directory -o backup.tar.lz
+pakr pack directory -f tlz -o - | pakr unpack - -f tar.lz -o restored
+```
+
+**Encoding**
+
+Lzip uses fixed `lc=3`, `lp=0`, `pb=2`: fast mode with HC3 at level 1, fast mode with HC4 at level 2 and normal mode with BT4 at levels 3-9. Liblzma selects match-search depth automatically.
+
+`--preset` selects the usual normalized level; `--max` selects level 9 without an additional extreme mode. Encoding produces one member and remains single-threaded.
+
+Known raw input sizes cap dictionaries at the smallest representable size covering the input, at least 4 KiB, without limiting useful history. Unknown-size streams and TAR retain the selected dictionary.
+
+**Memory**
+
+Liblzma encoder/decoder estimates plus a 4 MiB streaming allowance must fit `--memory` before expensive native allocations. Settings are never reduced to fit the budget; failure reports required and available bytes.
+
+Each concatenated member is checked against the same decoder budget. Legal dictionaries range from 4 KiB through 512 MiB.
+
+**Validation and cancellation**
+
+Headers must be version 1; payloads must terminate with the LZMA1 end marker. CRC32, uncompressed size and compressed member size must match. Truncation and trailing garbage are errors, including after TAR's end marker.
+
+Cancellation is checked between bounded native steps. Blocking I/O still depends on the underlying stream.
+
+</details>
+
+<details>
+<summary>Seekable Zstandard</summary>
+
+`--seekable` writes independent 8 MiB Zstandard frames followed by the official seek table. Ordinary Zstandard tools can decode the result.
+
+Encoder contexts and native workers are reused between frames. Only the seek index is spooled to a temporary file.
+
+Pakr detects the seek table in files and uses reusable decoder contexts with up to eight workers, reducing concurrency to keep retained frame buffers within 256 MiB. Single-worker buffered decoding avoids worker goroutines. Piped input and external frames with compressed or decoded sizes above 65 MiB use sequential streaming.
+
+Independent frames can reduce compression ratio and ordinary Zstandard can still be faster. Seekable output is opt-in.
+
+</details>
 
 ## Status output
 
@@ -144,18 +332,29 @@ Status goes to stderr, keeping stdout clean for archive data. Packing previews u
 :: unpacked 1248 entries | 842.0 mib | 1.8s | restored
 ```
 
-Entries include directories and links; data sizes count regular file contents. The percentage is archive size relative to original data size, so values above 100% indicate expansion. Empty inputs show `(n/a)`. Paths retain their case. On failure or cancellation, the live line is cleared before the error message. `--quiet` suppresses all status output.
+Entries include directories and links; data sizes count regular file contents. The percentage is archive size relative to original data size, so values above 100% indicate expansion. Empty inputs show `(n/a)`.
+
+Paths retain their case. On failure or cancellation, the live line is cleared before the error message. `--quiet` suppresses all status output, including errors.
 
 ## Filesystem behavior
 
-- Existing output archives and extracted files are never overwritten. Packing publishes through a no-clobber hard link, so the destination filesystem must support hard links.
-- Extraction uses Go's traversal-resistant `os.Root`, rejects escaping paths and link targets and removes the current partial file after failure. Entries extracted earlier may remain.
-- Regular files, directories and internal relative symlinks are supported; tar and supported RAR hardlinks are accepted during extraction. Symlinks on Windows require OS permission.
-- Permission bits and modification times are preserved where supported. Ownership, ACLs, extended attributes, special files, encrypted archives and sparse-file optimization are not supported. Keep input files stable while packing.
+- **No overwrites:** existing output archives and extracted files are never overwritten. Packing publishes through a no-clobber hard link, so the destination filesystem must support hard links.
+- **Contained extraction:** Go's traversal-resistant `os.Root` rejects escaping paths and link targets. The current partial file is removed after failure; earlier entries may remain.
+- **File types:** regular files, directories and internal relative symlinks are supported. Tar and supported RAR hardlinks are accepted during extraction. Symlinks on Windows require OS permission.
+- **Metadata:** permission bits and modification times are preserved where supported. Ownership, ACLs and extended attributes are not supported.
+- **Other limitations:** special files, encrypted archives and sparse-file optimization are not supported. Keep input files stable while packing.
 
 ## Building from source
 
-Build from **Linux or WSL** with Go 1.27.2 or newer, Zig 0.17.0, Bash, CMake 3.24 or newer, Make, a host C compiler, curl, patch, tar, xz and standard Unix utilities including `sha256sum`. Go and Zig must be on `PATH`.
+Build from **Linux or WSL**.
+
+| Requirements | Version / notes |
+| --- | --- |
+| Go | 1.27.2 or newer, on `PATH` |
+| Zig | 0.17.0, on `PATH` |
+| CMake | 3.24 or newer |
+| Build tools | Bash, Make and a host C compiler |
+| Utilities | curl, patch, tar, xz and standard Unix utilities including `sha256sum` |
 
 ```sh
 git clone https://github.com/coalaura/pakr.git
@@ -163,7 +362,11 @@ cd pakr
 bash scripts/build.sh linux amd64
 ```
 
-The script downloads pinned, checksum-verified native sources, builds their static libraries and compiles the binary with Go and Zig. NASM is built locally when needed; compression libraries do not need to be installed globally. Outputs go to `dist/pakr-<os>-<arch>` with `.exe` on Windows. Sources and build caches stay in `.native/`; native build logs are under `.native/build/<os>-<arch>/`.
+The script downloads pinned, checksum-verified native sources, builds static libraries and compiles the binary with Go and Zig. NASM is built locally when needed; compression libraries do not need to be installed globally.
+
+Outputs go to `dist/pakr-<os>-<arch>` with `.exe` on Windows. Sources and build caches stay in `.native/`; native build logs are under `.native/build/<os>-<arch>/`.
+
+### Build targets
 
 The first two arguments select `linux`, `windows` or `darwin` and `amd64` or `arm64`. Set `VERSION` to embed a release version:
 
@@ -171,7 +374,11 @@ The first two arguments select `linux`, `windows` or `darwin` and `amd64` or `ar
 VERSION=v1.2.3 bash scripts/build.sh windows amd64
 ```
 
-Darwin cross-compilation requires an existing macOS SDK; set `SDKROOT` to its path. Linux binaries use static musl linking. Windows binaries use normal OS DLLs, including the Universal C Runtime in Windows 10 and newer. macOS binaries use the OS-provided system runtime. Builds target baseline CPUs, while native libraries can select accelerated routines at runtime.
+- **Linux:** static musl linking.
+- **Windows:** normal OS DLLs, including the Universal C Runtime in Windows 10 and newer.
+- **macOS:** OS-provided system runtime. Cross-compilation requires an existing macOS SDK; set `SDKROOT` to its path.
+
+Builds target baseline CPUs; native libraries can select accelerated routines at runtime.
 
 ### Tests and benchmarks
 
@@ -183,11 +390,40 @@ bash scripts/build.sh linux amd64 test -tags integration
 bash scripts/build.sh linux amd64 test -run '^$' -bench . -benchmem
 ```
 
-Integration tests require `gzip`, `zstd`, `bzip2`, `bzip3`, `xz`, `lzip`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI` or `LZIP_CLI` to an official executable outside `PATH` if needed. Tests exercise the native backends, independently generated fixtures, archive round trips, truncated streams, Unicode paths, overwrite refusal, path traversal and CLI pipelines. Benchmarks report throughput, Go allocations and output/input size; benchmark representative data on your deployment platform when choosing settings.
+Integration tests require `gzip`, `zstd`, `bzip2`, `bzip3`, `xz`, `lzip`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI` or `LZIP_CLI` to an official executable outside `PATH` if needed.
 
-The integration-only `TestBzip3BlockLevels` exercises native allocations at every level and needs several GiB of free memory. For separate encode/decode throughput, compressed size, process peak RSS and 1/4-worker comparisons against the official CLI and pakr's BZIP2, Zstandard and XZ, run `python3 scripts/bench-bzip3.py --pakr "$PWD/dist/pakr-linux-amd64" --bzip3 /path/to/bzip3` on Linux with Python 3.9+ and a C compiler available as `cc`. It prints CSV using 64 MiB synthetic text, repeated repository source, mixed source/random and incompressible corpora, with three-run medians. Temporary inputs and outputs are removed automatically; file I/O and process startup are included and Go allocation counters do not measure native memory.
+Tests cover native backends, independently generated fixtures, archive round trips, truncated streams, Unicode paths, overwrite refusal, path traversal and CLI pipelines. The integration-only `TestBzip3BlockLevels` exercises native allocations at every level and needs several GiB of free memory.
 
-For Lzip, run `python3 scripts/bench-lzip.py --pakr "$PWD/dist/pakr-linux-amd64" --lzip /path/to/lzip --plzip /path/to/plzip`. This uses the same measurement helper with 4 KiB and 64 MiB text, source, mixed and random inputs at levels 1, 3 and 9, matching reference dictionary sizes and match lengths (encoder algorithms still differ). Optional plzip comparisons use one and four workers to expose independent-member speed, memory and ratio tradeoffs. `BenchmarkLzip` separately measures in-memory raw encoding/decoding and Go allocations without process or filesystem overhead.
+Benchmarks report throughput, Go allocations and output/input size. Use representative data on your deployment platform when choosing settings.
+
+<details>
+<summary>Process-level BZIP3 and Lzip benchmarks</summary>
+
+Run on Linux with Python 3.9+ and a C compiler available as `cc`.
+
+**BZIP3**
+
+```sh
+python3 scripts/bench-bzip3.py --pakr "$PWD/dist/pakr-linux-amd64" --bzip3 /path/to/bzip3
+```
+
+This compares one and four workers against the official CLI and pakr's BZIP2, Zstandard and XZ. It reports separate encode/decode throughput, compressed size and process peak RSS as CSV with three-run medians.
+
+Inputs are 64 MiB synthetic text, repeated repository source, mixed source/random and incompressible corpora.
+
+**Lzip**
+
+```sh
+python3 scripts/bench-lzip.py --pakr "$PWD/dist/pakr-linux-amd64" --lzip /path/to/lzip --plzip /path/to/plzip
+```
+
+This uses the same measurement helper with 4 KiB and 64 MiB text, source, mixed and random inputs at levels 1, 3 and 9. Reference dictionary sizes and match lengths are matched; encoder algorithms still differ.
+
+Optional plzip comparisons use one and four workers to expose independent-member speed, memory and ratio tradeoffs. `BenchmarkLzip` separately measures in-memory raw encoding/decoding and Go allocations without process or filesystem overhead.
+
+Temporary inputs and outputs are removed automatically. Process-level measurements include file I/O and startup; Go allocation counters do not measure native memory.
+
+</details>
 
 ## TODOs
 
@@ -201,4 +437,6 @@ For Lzip, run `python3 scripts/bench-lzip.py --pakr "$PWD/dist/pakr-linux-amd64"
 
 ## Third-party software
 
-See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations. BZIP3 is statically linked under LGPLv3. Every binary release must also provide the matching `pakr-source-<version>.tar.gz` containing application and dependency sources, license texts and rebuild materials. The [BZIP3 licensing and relinking section](THIRD_PARTY.md#bzip3-licensing-and-relinking) grants the necessary application-code permissions and explains how to rebuild with a modified library. The executable remains a single binary; the source bundle is a distribution obligation, not a runtime dependency.
+See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations. BZIP3 is statically linked under LGPLv3; the [licensing and relinking section](THIRD_PARTY.md#bzip3-licensing-and-relinking) grants the necessary application-code permissions and explains how to rebuild with a modified library.
+
+Every binary release must provide the matching `pakr-source-<version>.tar.gz` with application and dependency sources, license texts and rebuild materials. The executable remains a single binary; the source bundle is a distribution obligation, not a runtime dependency.
