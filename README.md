@@ -189,6 +189,16 @@ The integration-only `TestBzip3BlockLevels` exercises native allocations at ever
 
 For Lzip, run `python3 scripts/bench-lzip.py --pakr "$PWD/dist/pakr-linux-amd64" --lzip /path/to/lzip --plzip /path/to/plzip`. This uses the same measurement helper with 4 KiB and 64 MiB text, source, mixed and random inputs at levels 1, 3 and 9, matching reference dictionary sizes and match lengths (encoder algorithms still differ). Optional plzip comparisons use one and four workers to expose independent-member speed, memory and ratio tradeoffs. `BenchmarkLzip` separately measures in-memory raw encoding/decoding and Go allocations without process or filesystem overhead.
 
+## TODOs
+
+- Add [BSC](https://github.com/IlyaGrebnov/libbsc) support.
+- Add [Kanzi](https://github.com/flanglet/kanzi-cpp) support (LZ, BWT, ROLZ).
+- Add CAB extraction.
+- Add ISO9660 extraction.
+- Add WIM / ESD extraction.
+- Support PPMd for packing and unpacking.
+- Investigate [fast-lzma2](https://github.com/conor42/fast-lzma2) for XZ / 7z improvements.
+
 ## Third-party software
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations. BZIP3 is statically linked under LGPLv3. Every binary release must also provide the matching `pakr-source-<version>.tar.gz` containing application and dependency sources, license texts and rebuild materials. The [BZIP3 licensing and relinking section](THIRD_PARTY.md#bzip3-licensing-and-relinking) grants the necessary application-code permissions and explains how to rebuild with a modified library. The executable remains a single binary; the source bundle is a distribution obligation, not a runtime dependency.
