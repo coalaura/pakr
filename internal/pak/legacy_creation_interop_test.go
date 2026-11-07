@@ -1,18 +1,22 @@
-//go:build integration && linux
+//go:build integration
 
 package pak
 
 import (
+	"archive/tar"
 	"bytes"
 	"io"
 	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/coalaura/pakr/internal/interop"
 )
 
 func TestReferenceLegacyStreams(t *testing.T) {
@@ -27,7 +31,7 @@ func TestReferenceLegacyStreams(t *testing.T) {
 
 	for _, codec := range codecs {
 		t.Run(codec.tool, func(t *testing.T) {
-			for _, payload := range payloads {
+			for index, payload := range payloads {
 				input := filepath.Join(t.TempDir(), "input")
 
 				err := os.WriteFile(input, payload, 0o640)
@@ -47,13 +51,18 @@ func TestReferenceLegacyStreams(t *testing.T) {
 					t.Fatal(err)
 				}
 
+				produced, verify := interop.Output(t, strconv.Itoa(index), encoded.Bytes())
+				if !verify {
+					continue
+				}
+
 				command := exec.CommandContext(t.Context(), codec.tool, "-d", "-c")
 
 				if codec.format == "lzma" {
 					command.Args = append(command.Args, "--format=lzma")
 				}
 
-				command.Stdin = &encoded
+				command.Stdin = bytes.NewReader(produced)
 
 				decoded, err := command.Output()
 				if err != nil || !bytes.Equal(decoded, payload) {
@@ -67,14 +76,32 @@ func TestReferenceLegacyStreams(t *testing.T) {
 func TestReferenceLegacyCreation(t *testing.T) {
 	formats := []string{"cpio", "cpio.gz", "cpio.bz2", "cpio.xz", "cpio.zst", "ar", "iso"}
 	names := []string{"empty", "small", "123456789012345", "1234567890123456", "a name with spaces", "unicode-\u00e9-\u6f22\u5b57", "UPPER", "upper", strings.Repeat("a", 80) + "1.txt", strings.Repeat("a", 80) + "2.txt", strings.Repeat("b", 255)}
+
 	modified := time.Unix(1700000000, 0)
+	fileMode := os.FileMode(0o640)
+	directoryMode := os.FileMode(0o750)
+
+	if interop.TargetOS(t) == "windows" {
+		// Default Windows filesystems cannot represent case-distinct siblings
+		// or Unix permission bits. Verify the metadata that Windows supplies.
+		names = slices.DeleteFunc(names, func(name string) bool {
+			return name == "UPPER"
+		})
+
+		fileMode = 0o666
+		directoryMode = 0o777
+	}
 
 	for _, name := range formats {
 		t.Run(name, func(t *testing.T) {
 			base := t.TempDir()
 			source := filepath.Join(base, "tree")
 
-			err := os.MkdirAll(filepath.Join(source, "nested", "empty-dir"), 0o750)
+			err := os.MkdirAll(filepath.Join(source, "nested", "empty-dir"), directoryMode)
+			if err == nil {
+				err = os.Chmod(filepath.Join(source, "nested", "empty-dir"), directoryMode)
+			}
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,7 +122,11 @@ func TestReferenceLegacyCreation(t *testing.T) {
 					payload = nil
 				}
 
-				err = os.WriteFile(filename, payload, 0o640)
+				err = os.WriteFile(filename, payload, fileMode)
+				if err == nil {
+					err = os.Chmod(filename, fileMode)
+				}
+
 				if err == nil {
 					err = os.Chtimes(filename, modified, modified)
 				}
@@ -128,6 +159,21 @@ func TestReferenceLegacyCreation(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			encoded, err := os.ReadFile(archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			produced, verify := interop.Output(t, "archive", encoded)
+			if !verify {
+				return
+			}
+
+			err = os.WriteFile(archive, produced, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			tools := []string{"bsdtar"}
 
 			if format.Container == "cpio" {
@@ -144,11 +190,11 @@ func TestReferenceLegacyCreation(t *testing.T) {
 
 					output := t.TempDir()
 					command := exec.CommandContext(t.Context(), tool, "-xpf", archive)
-					command.Dir = output
 
 					switch tool {
 					case "ar", "llvm-ar":
-						command.Args = []string{tool, "xo", archive}
+						// ar extraction may apply umask even to stored permission bits.
+						command = exec.CommandContext(t.Context(), "sh", "-c", "umask 0; exec \"$@\"", "sh", tool, "xo", archive)
 					case "xorriso":
 						command.Args = []string{tool, "-osirrox", "on", "-indev", archive, "-extract", "/", output}
 					case "cpio", "bsdcpio":
@@ -171,6 +217,8 @@ func TestReferenceLegacyCreation(t *testing.T) {
 						command.Stdin = bytes.NewReader(data)
 					}
 
+					command.Dir = output
+
 					message, err := command.CombinedOutput()
 					if err != nil {
 						t.Fatalf("reference extract: %v: %s", err, message)
@@ -183,7 +231,7 @@ func TestReferenceLegacyCreation(t *testing.T) {
 						assertArchiveLink(t, root, "link", "small")
 
 						info, err := os.Stat(filepath.Join(root, "empty-dir"))
-						if err != nil || !info.IsDir() || info.Mode().Perm() != 0o750 {
+						if err != nil || !info.IsDir() || info.Mode().Perm() != directoryMode {
 							t.Fatalf("empty directory metadata: %v, %v", info, err)
 						}
 					}
@@ -320,8 +368,15 @@ func assertLegacyReferenceMetadata(t *testing.T, source, destination string) {
 		t.Fatal(err)
 	}
 
-	originalStat := original.Sys().(*syscall.Stat_t)
-	extractedStat := extracted.Sys().(*syscall.Stat_t)
+	originalStat, err := tar.FileInfoHeader(original, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	extractedStat, err := tar.FileInfoHeader(extracted, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if original.Mode() != extracted.Mode() || !original.ModTime().Equal(extracted.ModTime()) || originalStat.Uid != extractedStat.Uid || originalStat.Gid != extractedStat.Gid {
 		t.Fatalf("metadata changed for %s: mode %v, mtime %v, uid/gid %d/%d", destination, extracted.Mode(), extracted.ModTime(), extractedStat.Uid, extractedStat.Gid)

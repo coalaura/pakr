@@ -1,4 +1,4 @@
-//go:build integration && linux
+//go:build integration
 
 package pak
 
@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/coalaura/pakr/internal/interop"
 )
 
 type referenceCodec struct {
@@ -34,15 +36,10 @@ func TestReferenceInteroperability(t *testing.T) {
 
 	for _, codec := range codecs {
 		t.Run(codec.format, func(t *testing.T) {
-			tool, err := exec.LookPath(codec.tool)
-			if err != nil {
-				t.Fatal(err)
-			}
-
 			base := t.TempDir()
 			input := filepath.Join(base, "input")
 
-			err = os.WriteFile(input, data, 0o600)
+			err := os.WriteFile(input, data, 0o600)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -60,23 +57,36 @@ func TestReferenceInteroperability(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			decoder := exec.CommandContext(t.Context(), tool, "-d", "-c", archive)
-
-			decoded, err := decoder.Output()
+			encoded, err := os.ReadFile(archive)
 			if err != nil {
-				t.Fatalf("reference decode: %v", err)
+				t.Fatal(err)
 			}
 
-			if !bytes.Equal(decoded, data) {
-				t.Fatal("reference decoded different content")
+			produced, verify := interop.Output(t, "archive", encoded)
+			if verify {
+				decoder := exec.CommandContext(t.Context(), codec.tool, "-d", "-c")
+				decoder.Stdin = bytes.NewReader(produced)
+
+				decoded, err := decoder.Output()
+				if err != nil {
+					t.Fatalf("reference decode: %v", err)
+				}
+
+				if !bytes.Equal(decoded, data) {
+					t.Fatal("reference decoded different content")
+				}
 			}
 
-			encoder := exec.CommandContext(t.Context(), tool, "-c", input)
+			encoded = interop.Reference(t, "archive", func() []byte {
+				encoder := exec.CommandContext(t.Context(), codec.tool, "-c", input)
 
-			encoded, err := encoder.Output()
-			if err != nil {
-				t.Fatalf("reference encode: %v", err)
-			}
+				result, err := encoder.Output()
+				if err != nil {
+					t.Fatalf("reference encode: %v", err)
+				}
+
+				return result
+			})
 
 			archive = filepath.Join(base, "reference."+codec.format)
 
@@ -92,7 +102,7 @@ func TestReferenceInteroperability(t *testing.T) {
 				t.Fatalf("reference archive decode: %v", err)
 			}
 
-			decoded, err = os.ReadFile(filepath.Join(options.Output, "reference"))
+			decoded, err := os.ReadFile(filepath.Join(options.Output, "reference"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,11 +115,6 @@ func TestReferenceInteroperability(t *testing.T) {
 }
 
 func TestReferenceArchives(t *testing.T) {
-	tool, err := exec.LookPath("bsdtar")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	formats := []referenceArchive{{format: "tar", native: "pax"}, {format: "tar.lz", native: "pax"}, {format: "zip", native: "zip"}, {format: "7z", native: "7zip"}}
 
 	data := []byte("pakr archive interoperability\n")
@@ -154,27 +159,55 @@ func TestReferenceArchives(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			decoder := exec.CommandContext(t.Context(), tool, "-xf", archive, "-C", referenceOutput)
-
-			output, err := decoder.CombinedOutput()
+			encoded, err := os.ReadFile(archive)
 			if err != nil {
-				t.Fatalf("reference decode: %v: %s", err, output)
+				t.Fatal(err)
 			}
 
-			verifyArchiveContents(t, referenceOutput, data)
+			produced, verify := interop.Output(t, "archive", encoded)
+			if verify {
+				err = os.WriteFile(archive, produced, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				decoder := exec.CommandContext(t.Context(), "bsdtar", "-xf", archive, "-C", referenceOutput)
+
+				output, err := decoder.CombinedOutput()
+				if err != nil {
+					t.Fatalf("reference decode: %v: %s", err, output)
+				}
+
+				verifyArchiveContents(t, referenceOutput, data)
+			}
 
 			archive = filepath.Join(base, "reference."+item.format)
-			encoder := exec.CommandContext(t.Context(), tool, "--format", item.native, "-cf", archive, "-C", base)
 
-			if item.format == "tar.lz" {
-				encoder.Args = append(encoder.Args, "--lzip")
-			}
+			encoded = interop.Reference(t, "archive", func() []byte {
+				encoder := exec.CommandContext(t.Context(), "bsdtar", "--format", item.native, "-cf", archive, "-C", base)
 
-			encoder.Args = append(encoder.Args, "données")
+				if item.format == "tar.lz" {
+					encoder.Args = append(encoder.Args, "--lzip")
+				}
 
-			output, err = encoder.CombinedOutput()
+				encoder.Args = append(encoder.Args, "données")
+
+				output, err := encoder.CombinedOutput()
+				if err != nil {
+					t.Fatalf("reference encode: %v: %s", err, output)
+				}
+
+				result, err := os.ReadFile(archive)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				return result
+			})
+
+			err = os.WriteFile(archive, encoded, 0o600)
 			if err != nil {
-				t.Fatalf("reference encode: %v: %s", err, output)
+				t.Fatal(err)
 			}
 
 			options.Output = filepath.Join(base, "pakr-out")
@@ -190,11 +223,6 @@ func TestReferenceArchives(t *testing.T) {
 }
 
 func TestReferenceLegacyArchives(t *testing.T) {
-	tool, err := exec.LookPath("bsdtar")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	cases := []legacyCase{
 		{fixture: "cab_1.cab", format: "cab", name: "dir1/file1"},
 		{fixture: "cab_2.cab", format: "cab", name: "zero"},
@@ -222,13 +250,17 @@ func TestReferenceLegacyArchives(t *testing.T) {
 		t.Run(item.fixture, func(t *testing.T) {
 			data := legacyFixture(t, item.fixture)
 
-			decoder := exec.CommandContext(t.Context(), tool, "-xOf", "-", item.name)
-			decoder.Stdin = bytes.NewReader(data)
+			expected := interop.Reference(t, "contents", func() []byte {
+				decoder := exec.CommandContext(t.Context(), "bsdtar", "-xOf", "-", item.name)
+				decoder.Stdin = bytes.NewReader(data)
 
-			expected, err := decoder.Output()
-			if err != nil {
-				t.Fatalf("reference decode: %v", err)
-			}
+				result, err := decoder.Output()
+				if err != nil {
+					t.Fatalf("reference decode: %v", err)
+				}
+
+				return result
+			})
 
 			output := unpackFixture(t, data, item.format)
 			assertArchiveFile(t, output, item.name, expected)
@@ -261,9 +293,20 @@ func TestReferenceSeekable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decoded, err := exec.CommandContext(t.Context(), "zstd", "-d", "-c", archive).Output()
-	if err != nil || !bytes.Equal(decoded, data) {
-		t.Fatalf("reference seekable decode: %v", err)
+	encoded, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	produced, verify := interop.Output(t, "archive", encoded)
+	if verify {
+		decoder := exec.CommandContext(t.Context(), "zstd", "-d", "-c")
+		decoder.Stdin = bytes.NewReader(produced)
+
+		decoded, err := decoder.Output()
+		if err != nil || !bytes.Equal(decoded, data) {
+			t.Fatalf("reference seekable decode: %v", err)
+		}
 	}
 
 	options.Output = filepath.Join(base, "output")
@@ -273,7 +316,7 @@ func TestReferenceSeekable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decoded, err = os.ReadFile(filepath.Join(options.Output, "archive"))
+	decoded, err := os.ReadFile(filepath.Join(options.Output, "archive"))
 	if err != nil || !bytes.Equal(decoded, data) {
 		t.Fatalf("parallel seekable extraction: %v", err)
 	}

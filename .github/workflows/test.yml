@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Tests (including integration)
+  references:
+    name: Generate independent reference fixtures
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -24,17 +24,17 @@ jobs:
             .native/linux-amd64
           key: native-linux-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
 
-      - name: Run all tests
+      - name: Generate reference fixtures
         env:
           BUILD_IMAGE: coalaura/builder:latest
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --workdir "$GITHUB_WORKSPACE" \
-            --env BUILD_IMAGE --env JOBS=2 --env CI=true \
+            --env BUILD_IMAGE --env JOBS=2 --env CI=true --env GOEXPERIMENT=cgocheck2 \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint sh "$BUILD_IMAGE" -ec '
-              trap '\''chown -R "$HOST_UID:$HOST_GID" .native'\'' EXIT
+              trap '\''chown -R "$HOST_UID:$HOST_GID" .native dist'\'' EXIT
               apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools cpio xorriso binutils
               for tool in cpio xorriso gzip uncompress xz bsdtar ar; do
                 command -v "$tool"
@@ -61,18 +61,34 @@ jobs:
               cmake --build .native/build/bsc-reference/build --parallel 2
               export BZIP3_CLI="$PWD/.native/build/bzip3-cli/bzip3"
               export BSC_CLI="$PWD/.native/build/bsc-reference/build/bsc"
-              bash scripts/build.sh linux amd64 test -count=1
-              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v
+              mkdir -p dist/references dist/reference-tools
+              cp "$BZIP3_CLI" dist/reference-tools/bzip3
+              cp "$BSC_CLI" dist/reference-tools/bsc
+              export PAKR_INTEROP_MODE=prepare
+              export PAKR_INTEROP_REFERENCES="$PWD/dist/references"
+              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v -run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI)"
             '
 
-  native-build:
-    name: Native runtime test binary (${{ matrix.os }}/amd64)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reference-fixtures
+          path: dist/references/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reference-tools
+          path: dist/reference-tools/
+          if-no-files-found: error
+
+  test-build:
+    name: Build tests (${{ matrix.os }}/amd64)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: [windows, darwin]
+        os: [linux, windows, darwin]
     steps:
       - uses: actions/checkout@v7
 
@@ -84,7 +100,7 @@ jobs:
             .native/${{ matrix.os }}-amd64
           key: native-${{ matrix.os }}-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
 
-      - name: Cross-compile native tests
+      - name: Compile all test packages
         env:
           PAKR_TARGET_OS: ${{ matrix.os }}
           BUILD_IMAGE: coalaura/builder:latest${{ matrix.os == 'darwin' && '-macos' || '' }}
@@ -99,44 +115,156 @@ jobs:
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" amd64
               source ".native/build/$PAKR_TARGET_OS-amd64/toolchain/env.sh"
-              mkdir -p dist
               suffix=
               if [ "$PAKR_TARGET_OS" = windows ]; then suffix=.exe; fi
-              go test "${GO_BUILD_FLAGS[@]}" -ldflags "$GO_LDFLAGS" -c -o "dist/native.test$suffix" ./internal/native
+              module=$(go list -m)
+              packages=$(go list -tags=integration -f '\''{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}'\'' ./...)
+              for package in $packages; do
+                directory="dist/tests${package#"$module"}"
+                mkdir -p "$directory"
+                go test "${GO_BUILD_FLAGS[@]}" -ldflags "$GO_LDFLAGS" -tags=integration -c -o "$directory/package.test$suffix" "$package"
+              done
             '
 
-      - name: Upload native test binary
+      - name: Upload test binaries
         uses: actions/upload-artifact@v7
         with:
-          name: native-tests-${{ matrix.os }}-amd64
-          path: dist/native.test*
+          name: tests-${{ matrix.os }}-amd64
+          path: dist/tests/
           if-no-files-found: error
 
-  native-runtime:
-    name: Native writer runtime (${{ matrix.os }}/amd64)
-    needs: native-build
+  test-runtime:
+    name: Tests (${{ matrix.os }}/amd64)
+    needs: [test-build, references]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
+          - os: linux
+            runner: ubuntu-latest
           - os: windows
             runner: windows-2025
           - os: darwin
             runner: macos-15-intel
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
-          name: native-tests-${{ matrix.os }}-amd64
+          name: tests-${{ matrix.os }}-amd64
+          path: dist/tests
 
-      - name: Windows native writer tests
+      - uses: actions/download-artifact@v8
+        with:
+          name: reference-fixtures
+          path: dist/references
+
+      - name: Enable native Windows symlinks
         if: matrix.os == 'windows'
         shell: pwsh
-        run: .\native.test.exe -test.v -test.count=1 -test.timeout=5m -test.run='^Test(ArchiveWriter|CompressEmptyFraming|LZMAWriter|ISOStaging)'
+        run: |
+          New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Force | Out-Null
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -Value 1 -PropertyType DWord -Force | Out-Null
 
-      - name: macOS native writer tests
+      - name: Prepare case-sensitive macOS temporary volume
+        id: test-volume
         if: matrix.os == 'darwin'
         run: |
-          chmod +x native.test
-          ./native.test -test.v -test.count=1 -test.timeout=5m -test.run='^Test(ArchiveWriter|CompressEmptyFraming|LZMAWriter|ISOStaging)'
+          hdiutil create -size 4g -type SPARSE -fs APFSX -volname pakr-tests "$RUNNER_TEMP/pakr-tests.sparseimage"
+          hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/pakr-tests" "$RUNNER_TEMP/pakr-tests.sparseimage"
+          mkdir "$RUNNER_TEMP/pakr-tests/tmp"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP/pakr-tests/tmp" >> "$GITHUB_ENV"
+
+      - name: Run all test packages
+        shell: bash
+        env:
+          PAKR_INTEROP_MODE: platform
+          PAKR_INTEROP_REFERENCES: ${{ github.workspace }}/dist/references
+          PAKR_INTEROP_OUTPUTS: ${{ github.workspace }}/dist/produced
+        run: |
+          binaries=()
+          while IFS= read -r -d '' binary; do
+            binaries+=("$binary")
+          done < <(find "$PWD/dist/tests" -type f -name 'package.test*' -print0)
+          test "${#binaries[@]}" -gt 0
+          for binary in "${binaries[@]}"; do
+            chmod +x "$binary"
+            package_directory=${binary%/*}
+            package_directory=${package_directory#"$PWD/dist/tests"}
+            (
+              cd ".$package_directory"
+              "$binary" -test.v -test.count=1 -test.timeout=10m
+            )
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: produced-${{ matrix.os }}-amd64
+          path: dist/produced/
+          if-no-files-found: error
+
+      - name: Detach macOS temporary volume
+        if: always() && matrix.os == 'darwin' && steps.test-volume.outcome == 'success'
+        run: hdiutil detach "$RUNNER_TEMP/pakr-tests"
+
+  verify:
+    name: Independently verify ${{ matrix.os }} output
+    needs: [references, test-build, test-runtime]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, windows, darwin]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tests-linux-amd64
+          path: dist/tests
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: reference-fixtures
+          path: dist/references
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: reference-tools
+          path: dist/reference-tools
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: produced-${{ matrix.os }}-amd64
+          path: dist/produced
+
+      - name: Verify every expected platform output
+        env:
+          PAKR_INTEROP_OS: ${{ matrix.os }}
+          BUILD_IMAGE: coalaura/builder:latest
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE" \
+            --env PAKR_INTEROP_OS --env CI=true \
+            --entrypoint sh "$BUILD_IMAGE" -ec '
+              apk add --no-cache xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools cpio xorriso binutils
+              for tool in cpio xorriso gzip uncompress xz bsdtar ar; do
+                command -v "$tool"
+              done
+              cpio --version | grep -q "GNU cpio"
+              ar --version | grep -q "GNU ar"
+              chmod +x dist/reference-tools/* dist/tests/internal/native/package.test dist/tests/internal/pak/package.test
+              export BZIP3_CLI="$PWD/dist/reference-tools/bzip3"
+              export BSC_CLI="$PWD/dist/reference-tools/bsc"
+              export PAKR_INTEROP_MODE=verify
+              export PAKR_INTEROP_REFERENCES="$PWD/dist/references"
+              export PAKR_INTEROP_OUTPUTS="$PWD/dist/produced"
+              root=$PWD
+              for package in internal/native internal/pak; do
+                (cd "$package" && "$root/dist/tests/$package/package.test" -test.v -test.count=1 -test.timeout=10m -test.run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI)")
+              done
+            '

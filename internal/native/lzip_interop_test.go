@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strconv"
 	"testing"
+
+	"github.com/coalaura/pakr/internal/interop"
 )
 
 func TestLzipCLI(t *testing.T) {
@@ -24,26 +26,34 @@ func TestLzipCLI(t *testing.T) {
 		for _, size := range sizes {
 			data := testData(size)
 			compressed := encodeLzip(t, data, level)
+			name := strconv.Itoa(level) + "-" + strconv.Itoa(size)
 
-			command := exec.CommandContext(t.Context(), cli, "-d", "-c")
-			command.Stdin = bytes.NewReader(compressed)
+			produced, verify := interop.Output(t, name, compressed)
+			if verify {
+				command := exec.CommandContext(t.Context(), cli, "-d", "-c")
+				command.Stdin = bytes.NewReader(produced)
 
-			actual, err := command.Output()
-			if err != nil {
-				t.Fatal(err)
+				actual, err := command.Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if !bytes.Equal(actual, data) {
+					t.Fatalf("official decoder mismatch: level %d size %d", level, size)
+				}
 			}
 
-			if !bytes.Equal(actual, data) {
-				t.Fatalf("official decoder mismatch: level %d size %d", level, size)
-			}
+			compressed = interop.Reference(t, name, func() []byte {
+				command := exec.CommandContext(t.Context(), cli, "-c", "-"+strconv.Itoa(level))
+				command.Stdin = bytes.NewReader(data)
 
-			command = exec.CommandContext(t.Context(), cli, "-c", "-"+strconv.Itoa(level))
-			command.Stdin = bytes.NewReader(data)
+				encoded, err := command.Output()
+				if err != nil {
+					t.Fatal(err)
+				}
 
-			compressed, err = command.Output()
-			if err != nil {
-				t.Fatal(err)
-			}
+				return encoded
+			})
 
 			// Independently produced members must also concatenate without padding.
 			joined := append(bytes.Clone(compressed), compressed...)
@@ -53,7 +63,7 @@ func TestLzipCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			actual, err = io.ReadAll(reader)
+			actual, err := io.ReadAll(reader)
 
 			reader.Close()
 

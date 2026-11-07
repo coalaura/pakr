@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+
+	"github.com/coalaura/pakr/internal/interop"
 )
 
 func TestBSCCLI(t *testing.T) {
@@ -30,8 +32,14 @@ func TestBSCCLI(t *testing.T) {
 
 		for level := 1; level <= 9; level++ {
 			encoded := encodeBSC(t, data, level, 4, 317)
+			name := strconv.Itoa(level) + "-" + strconv.Itoa(size)
 
-			err := os.WriteFile(packed, encoded, 0o600)
+			produced, verify := interop.Output(t, name, encoded)
+			if !verify {
+				continue
+			}
+
+			err := os.WriteFile(packed, produced, 0o600)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,19 +76,23 @@ func TestBSCCLI(t *testing.T) {
 		options = append(options, []string{"-b1", "-m" + strconv.Itoa(sorter), "-e2", "-cp", "-r"})
 	}
 
-	for _, flags := range options {
-		arguments := append([]string{"e", input, packed}, flags...)
-		command := exec.CommandContext(t.Context(), cli, arguments...)
+	for index, flags := range options {
+		encoded := interop.Reference(t, strconv.Itoa(index), func() []byte {
+			arguments := append([]string{"e", input, packed}, flags...)
+			command := exec.CommandContext(t.Context(), cli, arguments...)
 
-		message, err := command.CombinedOutput()
-		if err != nil {
-			t.Fatalf("official encode %v: %v: %s", flags, err, message)
-		}
+			message, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("official encode %v: %v: %s", flags, err, message)
+			}
 
-		encoded, err := os.ReadFile(packed)
-		if err != nil {
-			t.Fatal(err)
-		}
+			data, err := os.ReadFile(packed)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			return data
+		})
 
 		blocks := splitBSC(t, encoded)
 		reordered := bytes.Clone(encoded[:8])
