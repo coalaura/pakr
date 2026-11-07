@@ -82,18 +82,18 @@ func command() *cli.Command {
 
 func flags(packing bool) []cli.Flag {
 	outputUsage := "destination directory, or - for raw Kanzi stdout (default: .)"
-	formatUsage := "input format, including extraction-only zipx, rar, cab, iso, cpio, ar, deb, lha, rpm, Z and lzma; default: detect from extension or header"
+	formatUsage := "input format, including extraction-only zipx, rar, cab, deb, lha and rpm; default: detect from extension or header"
 
 	if packing {
 		outputUsage = "output file, or - for stdout (default: archive.<format>)"
-		formatUsage = "format, e.g. tar.zst, tgz, zip, gz, bz3, tbz3, bsc, tbsc, xz, lz, tlz (default: infer output, then tar.zst)"
+		formatUsage = "format, e.g. tar.zst, tgz, zip, cpio.gz, ar, iso, gz, bz3, bsc, xz, lz, lzma, Z (default: infer output, then tar.zst)"
 	}
 
 	result := []cli.Flag{
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
-		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi and Lzip): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
+		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi, Lzip; LZMA-Alone packing): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
 	}
 
 	if packing {

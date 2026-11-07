@@ -122,7 +122,7 @@ func TestExtractionOnlyCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	terms := []string{"zipx", "rar", "extraction-only", "\nlz ", "cab", "iso", "cpio.zst", "ar/deb", "lha", "rpm", "\nZ ", "\nlzma "}
+	terms := []string{"zipx", "rar", "extraction-only", "\nlz ", "cab", "iso", "cpio.zst", "\nar ", "\ndeb ", "lha", "rpm", "\nZ ", "\nlzma "}
 
 	for _, term := range terms {
 		if !strings.Contains(output.String(), term) {

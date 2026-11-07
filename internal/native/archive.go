@@ -39,9 +39,11 @@ static int pakr_archive_open(struct archive *archive, const char *path, int writ
 import "C"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"runtime/cgo"
 	"strconv"
 	"time"
 	"unsafe"
@@ -62,12 +64,19 @@ type Header struct {
 	Modified time.Time
 	Kind     int
 	Links    uint32
+	UID      uint32
+	GID      uint32
 }
 
 type Archive struct {
 	archive *C.struct_archive
 	writing bool
 	filter  int
+	format  string
+	ctx     context.Context
+	target  io.Writer
+	handle  cgo.Handle
+	err     error
 }
 
 // libarchive converts entry names through the C locale. Initialize it before
@@ -75,6 +84,23 @@ type Archive struct {
 var archiveLocaleAvailable = C.pakr_archive_locale() != 0
 
 func (archive *Archive) WriteHeader(header Header) error {
+	if archive.archive == nil {
+		return errArchiveClosed
+	}
+
+	if archive.err != nil {
+		return archive.err
+	}
+
+	if archive.format != "" {
+		err := validateArchiveHeader(header, archive.format)
+		if err != nil {
+			archive.err = err
+
+			return err
+		}
+	}
+
 	entry := C.archive_entry_new()
 	if entry == nil {
 		return errors.New("allocate archive entry")
@@ -89,6 +115,13 @@ func (archive *Archive) WriteHeader(header Header) error {
 	C.archive_entry_set_size(entry, C.la_int64_t(header.Size))
 	C.archive_entry_set_perm(entry, C.pakr_mode_t(header.Mode&0o777))
 	C.archive_entry_set_mtime(entry, C.time_t(header.Modified.Unix()), C.long(header.Modified.Nanosecond()))
+	C.archive_entry_set_nlink(entry, 1)
+
+	if archive.format != "" {
+		C.archive_entry_set_perm(entry, C.pakr_mode_t(header.Mode))
+		C.archive_entry_set_uid(entry, C.la_int64_t(header.UID))
+		C.archive_entry_set_gid(entry, C.la_int64_t(header.GID))
+	}
 
 	switch header.Kind {
 	case Regular:
@@ -104,13 +137,21 @@ func (archive *Archive) WriteHeader(header Header) error {
 		C.archive_entry_set_symlink_utf8(entry, link)
 		C.archive_entry_set_size(entry, 0)
 	default:
-		return errors.New("unsupported 7z entry type")
+		return errors.New("unsupported archive entry type")
 	}
 
 	return archive.check(C.archive_write_header(archive.archive, entry))
 }
 
 func (archive *Archive) Write(data []byte) (int, error) {
+	if archive.archive == nil {
+		return 0, errArchiveClosed
+	}
+
+	if archive.err != nil {
+		return 0, archive.err
+	}
+
 	if len(data) == 0 {
 		return 0, nil
 	}
@@ -121,6 +162,8 @@ func (archive *Archive) Write(data []byte) (int, error) {
 	}
 
 	if int(count) != len(data) {
+		archive.err = io.ErrShortWrite
+
 		return int(count), io.ErrShortWrite
 	}
 
@@ -244,7 +287,18 @@ func (archive *Archive) Close() error {
 	)
 
 	if archive.writing {
-		err = archive.check(C.archive_write_close(archive.archive))
+		if archive.ctx != nil {
+			archive.err = errors.Join(archive.err, context.Cause(archive.ctx))
+		}
+
+		if archive.err != nil {
+			C.archive_write_fail(archive.archive)
+
+			err = archive.err
+		} else {
+			err = archive.check(C.archive_write_close(archive.archive))
+		}
+
 		status = C.archive_write_free(archive.archive)
 	} else {
 		err = archive.check(C.archive_read_close(archive.archive))
@@ -252,6 +306,10 @@ func (archive *Archive) Close() error {
 	}
 
 	archive.archive = nil
+	if archive.handle != 0 {
+		archive.handle.Delete()
+		archive.handle = 0
+	}
 
 	if status != C.ARCHIVE_OK {
 		err = errors.Join(err, fmt.Errorf("libarchive finalization failed: status %d", status))
@@ -270,11 +328,19 @@ func (archive *Archive) check(status C.int) error {
 
 func (archive *Archive) failure() error {
 	message := C.archive_error_string(archive.archive)
+	err := errors.New("libarchive operation failed")
+
 	if message == nil {
-		return errors.New("libarchive operation failed")
+		err = errors.Join(archive.err, err)
+	} else {
+		err = errors.Join(archive.err, errors.New(C.GoString(message)))
 	}
 
-	return errors.New(C.GoString(message))
+	if archive.writing {
+		archive.err = err
+	}
+
+	return err
 }
 
 func (archive *Archive) cpioFilters(format string) C.int {

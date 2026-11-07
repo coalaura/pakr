@@ -1,0 +1,19 @@
+diff --git a/libarchive/archive_write_add_filter_compress.c b/libarchive/archive_write_add_filter_compress.c
+--- a/libarchive/archive_write_add_filter_compress.c
++++ b/libarchive/archive_write_add_filter_compress.c
+@@ -440,9 +440,12 @@ archive_compressor_compress_close(struct archive_write_filter *f)
+ 	struct compress *compress = f->data;
+ 	int ret;
+ 
+-	ret = output_code(f, compress->cur_code);
+-	if (ret != ARCHIVE_OK)
+-		return ret;
++	/* Empty input has no pending code; emit only the compress header. */
++	if (compress->in_count != 0) {
++		ret = output_code(f, compress->cur_code);
++		if (ret != ARCHIVE_OK)
++			return ret;
++	}
+ 	ret = output_flush(f);
+ 	if (ret != ARCHIVE_OK)
+ 		return ret;

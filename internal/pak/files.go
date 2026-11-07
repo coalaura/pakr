@@ -18,6 +18,7 @@ import (
 type entry struct {
 	path   string
 	header native.Header
+	mode   fs.FileMode
 }
 
 type copier struct {
@@ -158,6 +159,7 @@ func collect(ctx context.Context, inputs []string, output string) ([]entry, int6
 			}
 
 			header := native.Header{Name: name, Mode: uint32(info.Mode().Perm()), Modified: info.ModTime()}
+			header.UID, header.GID = fileOwnership(info)
 
 			switch {
 			case info.Mode().IsRegular():
@@ -195,7 +197,7 @@ func collect(ctx context.Context, inputs []string, output string) ([]entry, int6
 				entries = grown
 			}
 
-			entries = append(entries, entry{path: filename, header: header})
+			entries = append(entries, entry{path: filename, header: header, mode: info.Mode()})
 
 			return nil
 		})

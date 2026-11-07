@@ -105,6 +105,10 @@ func TestLegacyFormats(t *testing.T) {
 			t.Fatalf("%s inference: %v", name, err)
 		}
 
+		if !format.extractionOnly() {
+			continue
+		}
+
 		err = Pack(t.Context(), []string{"missing"}, Options{Format: format}, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "extraction-only") {
 			t.Fatalf("%s creation accepted: %v", name, err)

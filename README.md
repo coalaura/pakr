@@ -57,7 +57,7 @@ Kanzi also accepts a raw byte stream from stdin: `pakr pack - -f knz -o -`. Use 
 
 `pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable signatures, including ISO9660 volume descriptors and CPIO inside gzip/BZIP2/XZ/ZSTD. Specify `-f` for Brotli, LHA/LZH or legacy LZMA without an extension, or compressed tar from stdin or a file without a recognized extension.
 
-Explicit and automatically detected sequential codec/tar formats stream directly from stdin; automatic detection probes compressed input for CPIO without spooling ordinary streams. ZIP/ZIPX, RAR, 7z, BSC, compressed CPIO and the extraction-only libarchive formats require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
+Explicit and automatically detected sequential codec/tar formats stream directly from stdin; automatic detection probes compressed input for CPIO without spooling ordinary streams. ZIP/ZIPX, RAR, 7z, BSC and the legacy libarchive containers/streams require temporary-file spooling for extraction. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
 
 ### Extraction limits
 
@@ -88,7 +88,7 @@ Flags may follow input paths.
 | `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory or `-` for raw Kanzi stdout when unpacking |
 | `-f`, `--format` | Explicit format or alias |
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
-| `--memory` | BSC / BZIP3 / Kanzi / Lzip codec allocation budget: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
+| `--memory` | BSC / BZIP3 / Kanzi / Lzip codec allocation budget, also LZMA-Alone packing: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -125,19 +125,21 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 | `zipx` | Extraction only | ZIP container with advanced methods through [libarchive](https://github.com/libarchive/libarchive) |
 | `rar` | Extraction only | RAR4/RAR5 through [libarchive](https://github.com/libarchive/libarchive) |
 | `cab` | Extraction only | CAB Store, MSZIP and LZX through [libarchive](https://github.com/libarchive/libarchive) |
-| `iso` | Extraction only | ISO9660, Rock Ridge and Joliet through [libarchive](https://github.com/libarchive/libarchive) |
-| `cpio`, `cpio.gz`, `cpio.bz2`, `cpio.xz`, `cpio.zst` | Extraction only | CPIO newc, crc, odc and binary through [libarchive](https://github.com/libarchive/libarchive) |
-| `ar`, `a`, `deb` | Extraction only | GNU/BSD AR through [libarchive](https://github.com/libarchive/libarchive); DEB outer members only |
+| `iso` | [libarchive](https://github.com/libarchive/libarchive), ISO9660 level 2 with Rock Ridge and Joliet | ISO9660, Rock Ridge and Joliet through [libarchive](https://github.com/libarchive/libarchive) |
+| `cpio`, `cpio.gz`, `cpio.bz2`, `cpio.xz`, `cpio.zst` | [libarchive](https://github.com/libarchive/libarchive), SVR4 newc with existing compression backends | CPIO newc, crc, odc and binary through [libarchive](https://github.com/libarchive/libarchive) |
+| `ar`, `a` | [libarchive](https://github.com/libarchive/libarchive), BSD AR with extended names | GNU/BSD AR through [libarchive](https://github.com/libarchive/libarchive) |
+| `deb` | Extraction only | DEB outer AR members through [libarchive](https://github.com/libarchive/libarchive) |
 | `lha`, `lzh` | Extraction only | Supported LHA methods through [libarchive](https://github.com/libarchive/libarchive) |
 | `rpm` | Extraction only | RPM's compressed CPIO payload through [libarchive](https://github.com/libarchive/libarchive) |
-| `Z`, `lzma` | Extraction only | Unix compress and LZMA-Alone streams through [libarchive](https://github.com/libarchive/libarchive) |
+| `Z` | [libarchive](https://github.com/libarchive/libarchive), Unix compress LZW | Unix compress through [libarchive](https://github.com/libarchive/libarchive) |
+| `lzma` | [liblzma](https://github.com/tukaani-project/xz), LZMA-Alone | LZMA-Alone through [libarchive](https://github.com/libarchive/libarchive) |
 | `lz4` | [liblz4](https://github.com/lz4/lz4) multithreaded frame API | [liblz4](https://github.com/lz4/lz4) frame API |
 | `7z` | [libarchive](https://github.com/libarchive/libarchive) with LZMA2 | [libarchive](https://github.com/libarchive/libarchive) |
 | `br`, `brotli` | [libbrotlienc](https://github.com/google/brotli) | [libbrotlidec](https://github.com/google/brotli) |
 
 ### Tar combinations and aliases
 
-Every creation-capable raw codec can be combined with tar:
+The following raw codecs can be combined with tar (`tar.Z` and `tar.lzma` are not supported):
 
 | Format | Short aliases |
 | --- | --- |
@@ -187,21 +189,21 @@ An end header is required to detect truncation, so legacy RAR4 archives without 
 
 ### Legacy archives and packages
 
-CAB, ISO9660, CPIO, AR/DEB, LHA/LZH, RPM, `.Z` and `.lzma` are extraction-only, including when inferred from the output filename. They use the existing statically linked libarchive 3.8.11 without runtime executables. Files, directories, safe links and available permission/modification-time metadata use the same contained, no-overwrite extractor and limits as other archives.
+CAB, DEB, LHA/LZH and RPM are extraction-only, including when inferred from the output filename. ISO9660, CPIO, AR, `.Z` and `.lzma` also support creation. These formats use the existing statically linked libarchive 3.8.11 and liblzma without runtime executables. Files, directories, safe links and available permission/modification-time metadata use the same contained, no-overwrite extractor and limits as other archives.
 
 - CAB supports Store, MSZIP and LZX. Multipart cabinets, Quantum and encrypted entries fail explicitly.
-- ISO9660 supports Rock Ridge and Joliet, with volume-size validation. UDF, mounting and special device entries are unsupported.
-- CPIO supports newc, checksum-bearing crc, odc and both binary byte orders, including payload-last hardlinks. Compressed CPIO is detected even with only `.gz`, `.bz2`, `.xz` or `.zst` extensions; an explicit raw codec format overrides that detection. Trailers are required; only up to 1 MiB of zero padding after the trailer is accepted, not concatenated CPIO archives.
-- AR supports GNU string tables and BSD extended names. DEB extracts the actual `debian-binary`, `control.tar.*` and `data.tar.*` members without recursively extracting or installing them.
+- ISO9660 creation writes level 2 data images with Rock Ridge (UTF-8 names, Unix modes/ownership and safe symlinks) and Joliet (a separate, potentially shortened name view). Names must use Unicode BMP characters for standard Joliet compatibility; its generated paths must also fit libarchive's 240-byte limit. Files must be smaller than 4 GiB minus 2 KiB; directory depth is limited to seven levels below the root, with at most 65,534 directories. Rock Ridge components are limited to 255 bytes and paths to 4095 bytes; timestamps must be in 1900-2155 and have second precision. Libarchive stages contents in a temporary file, requiring disk space proportional to the input in addition to the output image. Extraction supports Rock Ridge and Joliet, with volume-size validation. UDF, boot-image creation, mounting and special device entries are unsupported.
+- CPIO creation writes SVR4 newc with regular files, directories, safe symlinks, Unix modes/ownership and second-resolution timestamps. File sizes and nonnegative Unix timestamps must fit unsigned 32-bit fields; the root name `TRAILER!!!` is reserved. Extraction supports newc, checksum-bearing crc, odc and both binary byte orders, including payload-last hardlinks. Compressed CPIO is detected even with only `.gz`, `.bz2`, `.xz` or `.zst` extensions; an explicit raw codec format overrides that detection. Trailers are required; only up to 1 MiB of zero padding after the trailer is accepted, not concatenated CPIO archives. CPIO and ISO creation store hardlinked input files as independent files.
+- AR creation accepts only flat regular files, preserving Unix modes/ownership and second-resolution modification times, using BSD extended names for long filenames. Numeric fields must fit AR's decimal widths (10 digits for stored size, 12 for nonnegative timestamps, six for owner/group IDs). `.a` is a generic archive, without a linker symbol index. Extraction supports GNU string tables and BSD extended names. DEB extracts the actual `debian-binary`, `control.tar.*` and `data.tar.*` members without recursively extracting or installing them; DEB creation remains unsupported.
 - RPM extracts the CPIO payload, using gzip, BZIP2, XZ, ZSTD or legacy LZMA filters. It does not install packages, verify signatures or access an RPM database.
 - LHA/LZH compatibility follows libarchive's methods. Unicode names are supported; legacy codepages depend on the platform. Static Unix builds have no iconv dependency and reject unsupported encodings instead of silently changing names.
-- `.Z` and LZMA-Alone produce one raw file, including empty streams. Invalid headers and decoder failures are rejected; these formats have no payload checksum, so not every corruption is detectable. In particular, `.Z` has no uncompressed-size or end marker and cannot reliably detect truncation. LZMA trailing data is rejected. Use `-f lzma` or `-f lha` for piped/extensionless input.
+- `.Z` and LZMA-Alone compress one regular file and extract one raw file, including empty streams. Both encoders are single-threaded; `.Z` has no level setting, while LZMA-Alone uses the XZ preset mapping and respects `--memory`. Invalid headers and decoder failures are rejected; these formats have no payload checksum, so not every corruption is detectable. In particular, `.Z` has no uncompressed-size or end marker and cannot reliably detect truncation. LZMA trailing data is rejected. Use `-f lzma` or `-f lha` for piped/extensionless input.
 
 ## Performance and memory
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
 
-`--memory` applies to BSC, BZIP3, Kanzi and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive decoders are outside them. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
+`--memory` applies to BSC, BZIP3, Kanzi and Lzip for both packing and unpacking, and to LZMA-Alone packing. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive decoders are outside them. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
 
 ### Compression levels
 
@@ -225,7 +227,7 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | BSC preprocessing | levels 8-9 auto-detect sorting contexts; level 9 also detects and reorders structured records |
 | Kanzi | Native levels 1-9, unchanged; 64-bit block checksums |
 | Kanzi block size (MiB) | 4, 4, 4, 4, 4, 8, 16, 16, 32 |
-| XZ / 7z LZMA2 | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
+| XZ / 7z LZMA2 / LZMA-Alone | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
 | Lzip dictionary (MiB) | 1, 1.5, 2, 3, 4, 8, 16, 24, 32 |
 | Lzip nice match length | 32, 32, 32, 32, 32, 64, 128, 163, 273 |
 
@@ -235,7 +237,7 @@ Zero and negative settings still compress; they do not select store mode. Zstand
 
 ### Automatic memory budgets
 
-For BSC, BZIP3, Kanzi and Lzip, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
+For BSC, BZIP3, Kanzi, Lzip and LZMA-Alone packing, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
 
 | Available memory | Codec budget |
 | --- | --- |

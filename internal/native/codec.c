@@ -157,6 +157,30 @@ pakr_codec *pakr_codec_new_lzip(int encode, int level, uint64_t memory, int64_t 
 	return codec;
 }
 
+pakr_codec *pakr_codec_new_lzma(int level, uint64_t memory) {
+	pakr_codec *codec = calloc(1, sizeof(*codec));
+	if (!codec) return NULL;
+	codec->format = 12;
+	codec->encode = 1;
+	codec->level = pakr_level(4, level);
+	codec->threads = 1;
+	lzma_options_lzma options;
+	if (lzma_lzma_preset(&options, codec->level)) {
+		fail(codec, "invalid LZMA-Alone preset");
+		return codec;
+	}
+	lzma_filter filters[] = {{LZMA_FILTER_LZMA1, &options}, {LZMA_VLI_UNKNOWN, NULL}};
+	uint64_t required = lzma_raw_encoder_memusage(filters);
+	/* Reserve the Go input/output buffers as well as native framing state. */
+	uint64_t reserve = UINT64_C(4) << 20;
+	if (required == UINT64_MAX || memory < reserve || required > memory - reserve) {
+		fail(codec, "LZMA-Alone encoder exceeds memory budget; lower --level or raise --memory");
+		return codec;
+	}
+	if (lzma_alone_encoder(&codec->xz, &options) != LZMA_OK) fail(codec, "cannot initialize LZMA-Alone encoder");
+	return codec;
+}
+
 size_t pakr_codec_bound(pakr_codec *codec, size_t input_size) {
 	if (codec->format == 5) return LZ4F_compressBound(input_size, &codec->lz4_preferences);
 	return 2 * input_size;
@@ -218,7 +242,8 @@ int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, vo
 		else if (result < 0) { status = fail(codec, "invalid bzip2 stream"); }
 		break;
 	}
-	case 4: {
+	case 4:
+	case 12: {
 		codec->xz.next_in = input;
 		codec->xz.avail_in = available_input;
 		codec->xz.next_out = output;
@@ -229,7 +254,7 @@ int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, vo
 		codec->xz.next_in = NULL;
 		codec->xz.next_out = NULL;
 		if (result == LZMA_STREAM_END) { status = 1; }
-		else if (result != LZMA_OK && result != LZMA_BUF_ERROR) { status = fail(codec, "invalid xz stream or memory limit exceeded"); }
+		else if (result != LZMA_OK && result != LZMA_BUF_ERROR) { status = fail(codec, codec->format == 12 ? "LZMA-Alone encoding failed" : "invalid xz stream or memory limit exceeded"); }
 		break;
 	}
 	case 5: {
@@ -296,7 +321,7 @@ void pakr_codec_free(pakr_codec *codec) {
 			if (codec->encode) { BZ2_bzCompressEnd(&codec->bzip); } else { BZ2_bzDecompressEnd(&codec->bzip); }
 		}
 	}
-	if (codec->format == 4) { lzma_end(&codec->xz); }
+	if (codec->format == 4 || codec->format == 12) { lzma_end(&codec->xz); }
 	ZSTD_freeCCtx(codec->zstd_encoder);
 	ZSTD_freeDCtx(codec->zstd_decoder);
 	LZ4F_freeCompressionContext(codec->lz4_encoder);

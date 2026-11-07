@@ -62,7 +62,7 @@ var aliases = map[string]string{
 }
 
 func (format Format) extractionOnly() bool {
-	return format.Name == "zipx" || format.Container == "rar" || format.nativeExtraction()
+	return format.Name == "zipx" || format.Container == "rar" || format.Container == "cab" || format.Container == "lha" || format.Container == "rpm" || format.Name == "deb"
 }
 
 func (format Format) nativeExtraction() bool {

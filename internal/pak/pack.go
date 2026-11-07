@@ -95,8 +95,8 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		}
 	}
 
-	if !stdin && options.Format.Container == "" && (len(entries) != 1 || entries[0].header.Kind != native.Regular) {
-		return fmt.Errorf("%s compresses one regular file; use tar.%s for files or directories", options.Format.Name, options.Format.Name)
+	if !stdin && (options.Format.Container == "" || options.Format.Container == "raw") && (len(entries) != 1 || entries[0].header.Kind != native.Regular) {
+		return fmt.Errorf("%s compresses one regular file; use an archive format for multiple files or directories", options.Format.Name)
 	}
 
 	progress.Phase("pack", total)
@@ -140,6 +140,8 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		}
 	case "zip":
 		err = packZip(target, entries, options, copying)
+	case "ar", "iso":
+		err = packNative(target, entries, options.Format.Container, copying)
 	default:
 		err = packStream(target, entries, options, copying)
 	}
@@ -213,8 +215,10 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 		err   error
 	)
 
-	if options.Format.Codec != 0 {
-		if options.Seekable {
+	if options.Format.Codec != 0 || options.Format.Name == "lzma" {
+		if options.Format.Name == "lzma" {
+			codec, err = native.NewLZMAWriter(copying.ctx, target, options.Level, options.Memory)
+		} else if options.Seekable {
 			codec, err = native.NewSeekableWriter(target, options.Level, options.Threads)
 		} else if options.Format.Codec == native.Gzip {
 			codec, err = native.NewGzipWriter(target, options.Level, options.Threads)
@@ -267,6 +271,10 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 
 	if options.Format.Container == "tar" {
 		err = packTar(target, entries, copying)
+	} else if options.Format.Container == "cpio" {
+		err = packNative(target, entries, "cpio", copying)
+	} else if options.Format.Name == "Z" {
+		err = packNative(target, entries, "Z", copying)
 	} else if options.Stdin != nil {
 		_, err = copying.copy(target, options.Stdin)
 		copying.progress.File()
@@ -349,6 +357,72 @@ func pack7z(filename string, entries []entry, options Options, copying *copier) 
 
 		if err != nil {
 			return err
+		}
+
+		copying.progress.File()
+	}
+
+	copying.progress.Phase("finish", -1)
+
+	return archive.Close()
+}
+
+func packNative(target io.Writer, entries []entry, format string, copying *copier) error {
+	if format == "iso" {
+		// Libarchive uses signed 32-bit block locations. Reserve a conservative
+		// metadata bound per entry, including both directory trees and path tables.
+		blocks := int64(1024)
+		directories := 1
+
+		for index := range entries {
+			header := &entries[index].header
+			blocks += header.Size/2048 + 65
+
+			if header.Kind == native.Directory {
+				directories++
+			}
+
+			if blocks > 0x7fffffff || directories > 65535 {
+				return errors.New("ISO9660 image exceeds block-address or directory-count limits")
+			}
+		}
+	}
+
+	archive, err := native.NewArchiveWriter(copying.ctx, target, format)
+	if err != nil {
+		return err
+	}
+
+	defer archive.Close()
+
+	for index := range entries {
+		item := &entries[index]
+
+		err = copying.ctx.Err()
+		if err == nil {
+			header := item.header
+
+			if item.mode&os.ModeSetuid != 0 {
+				header.Mode |= 0o4000
+			}
+
+			if item.mode&os.ModeSetgid != 0 {
+				header.Mode |= 0o2000
+			}
+
+			if item.mode&os.ModeSticky != 0 {
+				header.Mode |= 0o1000
+			}
+
+			err = archive.WriteHeader(header)
+		}
+
+		if err == nil && item.header.Kind == native.Regular {
+			err = copying.file(archive, item)
+		}
+
+		if err != nil {
+			return archive.Abort(err)
 		}
 
 		copying.progress.File()
