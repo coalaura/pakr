@@ -1,0 +1,56 @@
+--- a/src/rapidgzip/gzip/deflate.hpp
++++ b/src/rapidgzip/gzip/deflate.hpp
+@@ -1785,7 +1785,9 @@
+                     const std::vector<bool>&  windowByteIsRequired,
+                     const VectorView<uint8_t> expectedOutput )
+ {
+-    Block</* ENABLE_STATISTICS */ false> block;
++    /* This decoder is nested beneath ISA-L and sparse-window analysis on small worker stacks. */
++    auto blockStorage = std::make_unique<Block</* ENABLE_STATISTICS */ false> >();
++    auto& block = *blockStorage;
+ 
+     /* Check that the created sparse window is correct by setting all sparse bytes to some arbitrary canary token.
+      * If not (should not happen), show a warning and fall back to a non-sparse window. */
+@@ -1856,37 +1858,9 @@
+-    /* Anonymous namespace to ensure that the 208kB deflate::Block is cleared from the stack before
+-     * allocating another such block inside verifySparseWindow! */
++    /* Release the decoder before allocating the verification decoder. A lexical scope does not
++     * release stack space: both large frames otherwise coexist with the caller's ISA-L decoder
++     * and overflow macOS worker stacks. Heap ownership trades an allocation for bounded stack use. */
+     {
+-        /* Size of deflate::Block is 207616. Allocation on stack did result in a SIGBUS
+-         * because of a stack overflow on MacOS:
+-         * #0 rapidgzip::deflate::Block<false>::setInitialWindow
+-         * #1 rapidgzip::deflate::getUsedWindowSymbols
+-         * #2 rapidgzip::GzipChunk<rapidgzip::ChunkData>::determineUsedWindowSymbols
+-         * #3 rapidgzip::GzipChunk<rapidgzip::ChunkData>::appendDeflateBlockBoundary
+-         * #4 rapidgzip::GzipChunk<rapidgzip::ChunkData>::decodeChunkWithRapidgzip
+-         * #5 rapidgzip::GzipChunk<rapidgzip::ChunkData>::decodeChunk
+-         * #6 rapidgzip::GzipChunkFetcher<FetchingStrategy::FetchMultiStream, rapidgzip::ChunkData>::decodeBlock
+-         * #7 rapidgzip::GzipChunkFetcher<FetchingStrategy::FetchMultiStream, rapidgzip::ChunkData>::decodeBlock
+-         * #8 BlockFetcher<...>::decodeAndMeasureBlock
+-         * #9 BlockFetcher<...>::submitOnDemandTask
+-         * #10 decltype(std::declval<BlockFetcher<rapidgzip::GzipBlockFinder, rapidgzip::ChunkData, FetchingStrategy::FetchMultiStream>::submitOnDemandTask
+-         * #11 std::__1::__packaged_task_func<BlockFetcher<rapidgzip::GzipBlockFinder, rapidgzip::ChunkData, FetchingStrategy::FetchMultiStream>::submitOnDemandTask
+-         * #12 std::__1::__packaged_task_function<rapidgzip::ChunkData ()>::operator()() const future:1880
+-         * #13 std::__1::packaged_task<rapidgzip::ChunkData ()>::operator()() future:1957
+-         * #14 ThreadPool::PackagedTaskWrapper::SpecializedFunctor<...>::operator()()
+-         * #15 ThreadPool::PackagedTaskWrapper::operator()()
+-         * #16 ThreadPool::workerMain(unsigned long)
+-         * [...]
+-         * HOWEVER, allocation on the heap with std::make_unique leads to some weird memory leak with
+-         * benchmarkIndexCompression. I cannot debug it with heaptrack because it shows only 1 GB memory usage,
+-         * not the 50+ GB observerd. It seems that POSIX brk is used and this leads to some fragmentation for
+-         * because it basically is only a linear allocator and can only free in LIFO order. Why exactly this
+-         * happens, I have no idea. It may be a tiny memory leak or it may be some weird allocation ordering
+-         * problem, especially with the heap-allocated return result ... The memory rises really fast with Clang 15,
+-         * but also seems to leak, albeit much much slower, with GCC 11.
+-         * It is made even harder to debug because this memory leak disappears, when enabling -fsanitize=leak, or
+-         * -fsanitize=address, and even when using valgrind --tool=massif! Utter fucking garbage!
+-         */
+-        Block</* ENABLE_STATISTICS */ false> block;
++        auto blockStorage = std::make_unique<Block</* ENABLE_STATISTICS */ false> >();
++        auto& block = *blockStorage;
+         block.setTrackBackreferences( true );
+ 
+         if constexpr ( CHECK_CORRECTNESS ) {

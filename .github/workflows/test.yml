@@ -36,8 +36,8 @@ jobs:
             --entrypoint sh "$BUILD_IMAGE" -ec '
               mkdir -p .native dist
               trap '\''chown -R "$HOST_UID:$HOST_GID" .native dist'\'' EXIT
-              apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools cpio xorriso binutils
-              for tool in cpio xorriso gzip uncompress xz bsdtar ar; do
+              apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools cpio xorriso binutils pkgconf
+              for tool in cpio xorriso gzip uncompress xz bsdtar ar pkg-config; do
                 command -v "$tool"
               done
               cpio --version | grep -q "GNU cpio"
@@ -119,6 +119,10 @@ jobs:
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" amd64
               source ".native/build/$PAKR_TARGET_OS-amd64/toolchain/env.sh"
+              if [ "$PAKR_TARGET_OS" = darwin ]; then
+                # Keep native function symbols; retain -w to avoid cross-host dsymutil.
+                GO_LDFLAGS="${GO_LDFLAGS//-s -w/-w}"
+              fi
               suffix=
               if [ "$PAKR_TARGET_OS" = windows ]; then suffix=.exe; fi
               module=$(go list -m)
@@ -180,6 +184,19 @@ jobs:
           hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/pakr-tests" "$RUNNER_TEMP/pakr-tests.sparseimage"
           mkdir "$RUNNER_TEMP/pakr-tests/tmp"
           printf 'TMPDIR=%s\n' "$RUNNER_TEMP/pakr-tests/tmp" >> "$GITHUB_ENV"
+
+      - name: Diagnose macOS parallel gzip
+        if: matrix.os == 'darwin'
+        timeout-minutes: 3
+        run: python3 scripts/test-macos-parallel.py
+
+      - name: Upload macOS parallel gzip diagnostics
+        if: always() && matrix.os == 'darwin'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-parallel-diagnostics
+          path: dist/macos-parallel-diagnostics/
+          if-no-files-found: warn
 
       - name: Run all test packages
         shell: bash

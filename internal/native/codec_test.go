@@ -75,13 +75,17 @@ func TestParallelReaders(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			t.Log("opening concatenated stream with two workers")
+
 			reader, err := OpenParallel(filename, format, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
 
+			t.Log("reading concatenated stream")
 			output, err := io.ReadAll(reader)
 
+			t.Log("closing concatenated stream")
 			reader.Close()
 
 			if err != nil {
@@ -97,10 +101,14 @@ func TestParallelReaders(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			t.Log("opening truncated stream with two workers")
+
 			reader, err = OpenParallel(filename, format, 2)
 			if err == nil {
+				t.Log("reading truncated stream")
 				_, err = io.Copy(io.Discard, reader)
 
+				t.Log("closing truncated stream")
 				reader.Close()
 			}
 
