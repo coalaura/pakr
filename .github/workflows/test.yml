@@ -22,7 +22,7 @@ jobs:
           path: |
             .native/downloads
             .native/linux-amd64
-          key: native-linux-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
+          key: native-linux-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h', 'internal/native/wim/**', 'internal/native/wim.h') }}
 
       - name: Generate reference fixtures
         env:
@@ -60,6 +60,8 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release -DBSC_BUILD_SHARED_LIB=OFF \
                 -DBSC_ENABLE_NATIVE_COMPILATION=OFF -DBSC_ENABLE_OPENMP=OFF -DBSC_ENABLE_CUDA=OFF
               cmake --build .native/build/bsc-reference/build --parallel 2
+              bash scripts/wimlib/reference.sh
+              export PAKR_WIMLIB_IMAGEX="$PWD/.native/build/wimlib-reference/wimlib-imagex"
               export BZIP3_CLI="$PWD/.native/build/bzip3-cli/bzip3"
               export BSC_CLI="$PWD/.native/build/bsc-reference/build/bsc"
               mkdir -p dist/references dist/reference-tools
@@ -67,7 +69,7 @@ jobs:
               cp "$BSC_CLI" dist/reference-tools/bsc
               export PAKR_INTEROP_MODE=prepare
               export PAKR_INTEROP_REFERENCES="$PWD/dist/references"
-              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v -run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI)"
+              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v -run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI|WIMImagex)"
             '
 
       - uses: actions/upload-artifact@v7
@@ -99,7 +101,7 @@ jobs:
           path: |
             .native/downloads
             .native/${{ matrix.os }}-amd64
-          key: native-${{ matrix.os }}-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
+          key: native-${{ matrix.os }}-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h', 'internal/native/wim/**', 'internal/native/wim.h') }}
 
       - name: Compile all test packages
         env:

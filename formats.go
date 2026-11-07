@@ -27,6 +27,8 @@ knz     Fast       Fast       High-very high
 xz      Slow       Moderate   Very high
 lz      Slow       Moderate   Very high
 7z      Slow       Moderate   Very high
+wim     Moderate   Fast       High
+esd     Slow       Moderate   Very high
 br      Fast       Fast       High
 
 Choosing a format
@@ -41,6 +43,8 @@ Format notes
   - ZIP/ZIPX: Deflate64 and MP3/JPEG/WavPack methods are unsupported.
   - RAR: no multipart or RAR4 solid archives; RAR5 solid support is limited.
   - CAB: no multipart or Quantum-compressed cabinets.
+  - WIM: XPRESS at levels 1-2, LZX at 3-9; ESD: solid LZMS, 64 MiB chunks.
+  - WIM/ESD: file archives, not Windows deployment; multi-image input needs --image N.
   - ISO creation: level 2 with Rock Ridge and Joliet; no UDF or boot images.
   - CPIO creation: SVR4 newc; also cpio.gz, cpio.bz2, cpio.xz and cpio.zst.
   - AR/.a creation: flat regular files, BSD long names, no library symbol index.

@@ -20,7 +20,10 @@ cp "$root/.native/src/bzip3/LICENSE" "$bundle/licenses/LGPL-3.0.txt"
 cp "$root/.native/src/xz/COPYING.GPLv3" "$bundle/licenses/GPL-3.0.txt"
 cp "$root/.native/src/bzip3/3rdparty/libsais-LICENSE" "$bundle/licenses/libsais.txt"
 cp "$root/.native/src/kanzi/LICENSE" "$bundle/licenses/kanzi.txt"
+cp "$root/.native/src/wimlib/COPYING.LGPL" "$bundle/licenses/LGPL-2.1.txt"
+cp "$root/.native/src/wimlib/COPYING" "$bundle/licenses/wimlib.txt"
 printf 'BZIP3 copyright (C) 2022-2024 Kamila Szewczyk; LGPLv3 or later.\nSee THIRD_PARTY.md for license notices, relinking permission and rebuilding instructions. Native notices are in the included source archives.\n' > "$bundle/licenses/NOTICE.txt"
+printf 'wimlib 1.14.5, copyright Eric Biggers and contributors; LGPL-2.1-or-later library option, without NTFS-3G. Full copyright notices are in the included wimlib source archive.\n' >> "$bundle/licenses/NOTICE.txt"
 (cd "$bundle" && go mod vendor)
 (cd "$bundle/tools/toolchain" && go mod vendor)
 { go version; zig version; cmake --version; printf 'Release: %s\nBuilder image: %s\n' "$version" "${BUILD_IMAGE:-local}"; } > "$bundle/TOOLCHAIN.txt"

@@ -1,0 +1,57 @@
+--- a/src/dentry.c
++++ b/src/dentry.c
+@@ -1528,9 +1528,9 @@
+-			   struct wim_dentry * restrict dir, unsigned depth)
++			   struct wim_dentry * restrict dir, unsigned depth, size_t *remaining)
+ {
+ 	u64 cur_offset = dir->d_subdir_offset;
+ 
+ 	/* Disallow extremely deep or cyclic directory structures  */
+-	if (unlikely(depth >= 16384)) {
++	if (unlikely(depth >= 256)) {
+ 		ERROR("Directory structure too deep!");
+ 		return WIMLIB_ERR_INVALID_METADATA_RESOURCE;
+ 	}
+@@ -1552,7 +1552,13 @@
+-		/* Ignore dentries with bad names.  */
+-		if (unlikely(should_ignore_dentry(dir, child))) {
++		/* Reject malformed trees rather than silently dropping entries.
++		 * Bound expansion when multiple directories alias the same offsets. */
++		if (unlikely(*remaining == 0 || should_ignore_dentry(dir, child))) {
+ 			free_dentry(child);
+-			continue;
++			return WIMLIB_ERR_INVALID_METADATA_RESOURCE;
+ 		}
++		(*remaining)--;
++		if (child->d_subdir_offset && child->d_subdir_offset >= buf_len) {
++			free_dentry(child);
++			return WIMLIB_ERR_INVALID_METADATA_RESOURCE;
++		}
+ 
+ 		/* Link the child into the directory.  */
+@@ -1568,3 +1573,3 @@
+ 			free_dentry(child);
+-			continue;
++			return WIMLIB_ERR_INVALID_METADATA_RESOURCE;
+ 		}
+@@ -1579,1 +1584,1 @@
+-								 depth + 1);
++								 depth + 1, remaining);
+@@ -1585,2 +1590,3 @@
+ 					dentry_full_path(child));
++				return WIMLIB_ERR_INVALID_METADATA_RESOURCE;
+ 			}
+@@ -1628,3 +1634,2 @@
+-			WARNING("The root directory has a nonempty name; "
+-				"removing it.");
+-			dentry_set_name(root, NULL);
++			free_dentry_tree(root, NULL);
++			return WIMLIB_ERR_INVALID_METADATA_RESOURCE;
+@@ -1640,1 +1645,2 @@
+-			ret = read_dentry_tree_recursive(buf, buf_len, root, 0);
++			size_t remaining = buf_len / 64;
++			ret = read_dentry_tree_recursive(buf, buf_len, root, 0, &remaining);
+@@ -1645,2 +1651,1 @@
+-		WARNING("The metadata resource has no directory entries; "
+-			"treating as an empty image.");
++		return WIMLIB_ERR_INVALID_METADATA_RESOURCE;

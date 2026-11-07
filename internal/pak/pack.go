@@ -19,6 +19,7 @@ type Options struct {
 	Threads  int
 	Memory   uint64
 	Level    int
+	Image    int
 	Extreme  bool
 	Seekable bool
 	Limits   *ExtractionLimits
@@ -108,7 +109,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 		target    = stdout
 	)
 
-	if output != "-" || options.Format.Container == "7z" || options.Format.Codec == native.BSC {
+	if output != "-" || options.Format.Container == "7z" || options.Format.Container == "wim" || options.Format.Codec == native.BSC {
 		directory := ""
 
 		if output != "-" {
@@ -133,6 +134,11 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 	}
 
 	switch options.Format.Container {
+	case "wim":
+		err = temporary.Close()
+		if err == nil {
+			err = packWIM(temporary.Name(), inputs, entries, options, copying)
+		}
 	case "7z":
 		err = temporary.Close()
 		if err == nil {
@@ -159,7 +165,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 
 	size := written.bytes
 
-	if (options.Format.Container == "7z" || options.Format.Codec == native.BSC) && options.Log != nil {
+	if (options.Format.Container == "7z" || options.Format.Container == "wim" || options.Format.Codec == native.BSC) && options.Log != nil {
 		info, err := os.Stat(temporary.Name())
 		if err != nil {
 			return err
@@ -169,7 +175,7 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 	}
 
 	if temporary != nil {
-		if options.Format.Container != "7z" {
+		if options.Format.Container != "7z" && options.Format.Container != "wim" {
 			err = temporary.Close()
 			if err != nil {
 				return err

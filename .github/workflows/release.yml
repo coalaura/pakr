@@ -34,7 +34,7 @@ jobs:
           path: |
             .native/downloads
             .native/${{ matrix.os }}-${{ matrix.arch }}
-          key: native-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
+          key: native-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h', 'internal/native/wim/**', 'internal/native/wim.h') }}
 
       - name: Build native libraries
         env:

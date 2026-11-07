@@ -50,7 +50,7 @@ func command() *cli.Command {
 	return &cli.Command{
 		Name:            "pakr",
 		Usage:           "fast, uncomplicated packing and unpacking",
-		Description:     "Includes BZIP3, copyright (C) 2022-2024 Kamila Szewczyk, under LGPLv3. License texts, corresponding source and relinking permission are in the matching pakr-source release archive; see THIRD_PARTY.md.",
+		Description:     "Includes BZIP3, copyright (C) 2022-2024 Kamila Szewczyk, under LGPLv3 and wimlib, copyright Eric Biggers and contributors, under LGPL-2.1-or-later. License texts, corresponding source and relinking permission are in the matching pakr-source release archive; see THIRD_PARTY.md.",
 		Version:         version,
 		HideHelpCommand: true,
 		Flags: []cli.Flag{
@@ -93,7 +93,7 @@ func flags(packing bool) []cli.Flag {
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
-		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi, Lzip; LZMA-Alone packing): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
+		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi, Lzip, WIM/ESD; LZMA-Alone packing): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
 	}
 
 	if packing {
@@ -102,6 +102,7 @@ func flags(packing bool) []cli.Flag {
 		result = append(result, &cli.BoolFlag{Name: "max", Usage: "maximum practical effort, XZ extreme, and all CPUs within memory budgets; explicit settings override"})
 		result = append(result, &cli.BoolFlag{Name: "seekable", Usage: "write independent ZSTD frames and the standard seek table (zst/tar.zst only)"})
 	} else {
+		result = append(result, &cli.IntFlag{Name: "image", Usage: "1-based WIM/ESD image index (required for multi-image archives)"})
 		result = append(result, &cli.StringFlag{Name: "max-output", Value: "16TiB", Usage: "maximum extracted payload bytes (bytes, KiB, MiB, GiB, TiB; 0 disables)"})
 		result = append(result, &cli.StringFlag{Name: "max-file-size", Value: "1TiB", Usage: "maximum individual extracted file size (same units; 0 disables)"})
 		result = append(result, &cli.Uint64Flag{Name: "max-entries", Value: pak.DefaultMaxEntries, Usage: "maximum archive entries, including directories and links (0 disables)"})
@@ -232,6 +233,11 @@ func optionsFor(command *cli.Command, packing bool) (pak.Options, error) {
 			return options, fmt.Errorf("--level must be from 1 to 9")
 		}
 	} else {
+		options.Image = command.Int("image")
+		if command.IsSet("image") && options.Image < 1 {
+			return options, fmt.Errorf("--image must be a positive 1-based image index")
+		}
+
 		limits := &pak.ExtractionLimits{MaxEntries: command.Uint64("max-entries")}
 
 		limits.MaxOutput, err = parseSize(command.String("max-output"))

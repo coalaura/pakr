@@ -14,6 +14,8 @@ type Format struct {
 }
 
 var formats = map[string]Format{
+	"wim":    {Name: "wim", Container: "wim"},
+	"esd":    {Name: "esd", Container: "wim"},
 	"tar":    {Name: "tar", Container: "tar"},
 	"zip":    {Name: "zip", Container: "zip"},
 	"zipx":   {Name: "zipx", Container: "zip"},
@@ -67,7 +69,7 @@ func (format Format) extractionOnly() bool {
 
 func (format Format) nativeExtraction() bool {
 	switch format.Container {
-	case "cab", "iso", "cpio", "ar", "lha", "rpm", "raw":
+	case "cab", "iso", "cpio", "ar", "lha", "rpm", "raw", "wim":
 		return true
 	default:
 		return false

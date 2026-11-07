@@ -88,7 +88,7 @@ Flags may follow input paths.
 | `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory or `-` for raw Kanzi stdout when unpacking |
 | `-f`, `--format` | Explicit format or alias |
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
-| `--memory` | BSC / BZIP3 / Kanzi / Lzip codec allocation budget, also LZMA-Alone packing: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
+| `--memory` | BSC / BZIP3 / Kanzi / Lzip / WIM / ESD allocation budget, also LZMA-Alone packing: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -106,7 +106,7 @@ Flags may follow input paths.
 
 Explicit `--threads`, `--level` or `--preset` settings override their respective `--max` defaults regardless of argument order. Explicit `--level 9` or `--preset best` also overrides XZ's extreme setting.
 
-Unpacking-specific flags are listed under [Extraction limits](#extraction-limits).
+Unpacking-specific flags are listed under [Extraction limits](#extraction-limits). WIM and ESD also accept `--image N` to select a 1-based image index; selection is required for multi-image archives.
 
 ## Formats
 
@@ -135,6 +135,8 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 | `lzma` | [liblzma](https://github.com/tukaani-project/xz), LZMA-Alone | LZMA-Alone through [libarchive](https://github.com/libarchive/libarchive) |
 | `lz4` | [liblz4](https://github.com/lz4/lz4) multithreaded frame API | [liblz4](https://github.com/lz4/lz4) frame API |
 | `7z` | [libarchive](https://github.com/libarchive/libarchive) with LZMA2 | [libarchive](https://github.com/libarchive/libarchive) |
+| `wim` | wimlib 1.14.5, non-solid XPRESS (levels 1-2) or LZX (levels 3-9), 32 KiB chunks | wimlib 1.14.5, verified resources and contained publication |
+| `esd` | wimlib 1.14.5, solid LZMS, 64 MiB chunks | Same WIM reader; the two formats share a signature |
 | `br`, `brotli` | [libbrotlienc](https://github.com/google/brotli) | [libbrotlidec](https://github.com/google/brotli) |
 
 ### Tar combinations and aliases
@@ -187,6 +189,18 @@ An end header is required to detect truncation, so legacy RAR4 archives without 
 
 </details>
 
+### WIM and ESD
+
+`pakr pack documents photos -o backup.wim` creates one image with the usual input-path semantics. Use `.esd` for solid LZMS compression, or `-f wim` / `-f esd` explicitly. `pakr unpack backup.esd -o restored --image 2` selects an image; single-image archives select it automatically. Pakr does not append, update, mount or deploy images.
+
+Files, directories, hardlinks, safe relative symlinks, modification times and available ordinary Unix permissions are supported. Windows symlink extraction requires a direct, existing target in the selected image; dangling links and symlink chains are rejected so directory-link types are not guessed. Ownership, ACLs, creation/access times and DOS 8.3 aliases are not restored. Capture excludes ACLs; extraction rejects stored security descriptors, alternate streams, extended attributes, EFS encryption, object IDs, devices, junctions and unsupported reparse tags. Files with unsupported content-bearing metadata fail rather than being silently omitted. Windows deployment images commonly contain unsupported metadata. Split, encrypted and nonstandard pipable WIMs are unsupported. Paths must be portable, without case collisions or reserved Windows names; directory depth is limited to 256.
+
+Extraction preflights the selected tree and limits, verifies resource hashes (and integrity tables when present), then publishes through `os.Root` without overwriting. Native decoding writes only generated blob names in a private staging directory, never archive paths or links. Failed publication removes entries created by that job. Staging needs disk space for unique uncompressed resources in addition to final output. Output directories must not already contain the archive's paths, including directories. Capture checks the scanned manifest again and fails if entries change type, size or membership; callers should keep inputs stable during capture.
+
+Standard WIMs require seeking. Stdout packing completes a temporary archive before copying it; stdin extraction uses bounded disk spooling. The stdin bound is the smaller of `--max-output` and 16 TiB (16 TiB when the limit is disabled), plus 12.5% and 256 MiB for framing. This bound applies to the whole input, including unselected images.
+
+WIM/ESD use native compression workers, reducing their count to fit `--memory` without lowering compression effort. Budgets include native compressor estimates, chunk queues and conservative metadata allowances; a budget that cannot fit one worker fails. ESD's 64 MiB chunks can require substantial memory. Actual worker counts are reported when writing; small inputs may use fewer workers. Extraction has one native decoder. WIM jobs within one process are serialized because native compression defaults are global. Allocation estimates are not a hard RSS cap.
+
 ### Legacy archives and packages
 
 CAB, DEB, LHA/LZH and RPM are extraction-only, including when inferred from the output filename. ISO9660, CPIO, AR, `.Z` and `.lzma` also support creation. These formats use the existing statically linked libarchive 3.8.11 and liblzma without runtime executables. Files, directories, safe links and available permission/modification-time metadata use the same contained, no-overwrite extractor and limits as other archives.
@@ -203,7 +217,7 @@ CAB, DEB, LHA/LZH and RPM are extraction-only, including when inferred from the 
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
 
-`--memory` applies to BSC, BZIP3, Kanzi and Lzip for both packing and unpacking, and to LZMA-Alone packing. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive decoders are outside them. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
+`--memory` applies to BSC, BZIP3, Kanzi, Lzip, WIM and ESD for both packing and unpacking, and to LZMA-Alone packing. Other codecs use fixed budgets. These are allocation budgets, not whole-process RSS guarantees; other parallel decoder indexes and libarchive decoders are outside them. WIM/ESD include conservative metadata allowances. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
 
 ### Compression levels
 
@@ -226,6 +240,8 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | BSC LZP hash bits / match length | 15/72, 15/72, 15/72, 16/72, 16/72, 17/72, 18/72, 18/72, 18/128 |
 | BSC preprocessing | levels 8-9 auto-detect sorting contexts; level 9 also detects and reorders structured records |
 | Kanzi | Native levels 1-9, unchanged; 64-bit block checksums |
+| WIM | XPRESS 25, 50; then LZX 25, 50, 75, 100, 125, 150, 175 |
+| ESD | LZMS 20, 40, 60, 80, 100, 120, 140, 160, 180 |
 | Kanzi block size (MiB) | 4, 4, 4, 4, 4, 8, 16, 16, 32 |
 | XZ / 7z LZMA2 / LZMA-Alone | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
 | Lzip dictionary (MiB) | 1, 1.5, 2, 3, 4, 8, 16, 24, 32 |
@@ -237,7 +253,7 @@ Zero and negative settings still compress; they do not select store mode. Zstand
 
 ### Automatic memory budgets
 
-For BSC, BZIP3, Kanzi, Lzip and LZMA-Alone packing, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
+For BSC, BZIP3, Kanzi, Lzip, WIM, ESD and LZMA-Alone packing, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
 
 | Available memory | Codec budget |
 | --- | --- |
@@ -448,7 +464,7 @@ bash scripts/build.sh linux amd64 test -tags integration
 bash scripts/build.sh linux amd64 test -run '^$' -bench . -benchmem
 ```
 
-Direct external-tool integration tests require `gzip`, `uncompress`, `zstd`, `bzip2`, `bzip3`, `bsc`, `xz`, `lzip`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI`, `BSC_CLI` or `LZIP_CLI` to an official executable outside `PATH` if needed. Legacy creation checks also use GNU `cpio`, GNU `ar` and `xorriso`; these may skip locally when absent but are required with `CI=true`. BSD `cpio` and LLVM `ar` are additional optional readers. CI installs and checks the required tools on Linux, including independent Rock Ridge and Joliet extraction with `xorriso`.
+Direct external-tool integration tests require `gzip`, `uncompress`, `zstd`, `bzip2`, `bzip3`, `bsc`, `xz`, `lzip`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI`, `BSC_CLI` or `LZIP_CLI` to an official executable outside `PATH` if needed. WIM/ESD interoperability tests use `PAKR_WIMLIB_IMAGEX`; after the Linux native build, `bash scripts/wimlib/reference.sh` builds the pristine pinned upstream CLI at `.native/build/wimlib-reference/wimlib-imagex`. CI runs bidirectional XPRESS, LZX and solid LZMS checks, image selection and unsafe-link rejection against it. Legacy creation checks also use GNU `cpio`, GNU `ar` and `xorriso`; these may skip locally when absent but are required with `CI=true`. BSD `cpio` and LLVM `ar` are additional optional readers. CI installs and checks the required tools on Linux, including independent Rock Ridge and Joliet extraction with `xorriso`.
 
 Tests cover native backends, independently generated fixtures, archive round trips, truncated streams, Unicode paths, overwrite refusal, path traversal and CLI pipelines. The integration-only `TestBzip3BlockLevels` exercises native allocations at every level and needs several GiB of free memory.
 
@@ -495,6 +511,6 @@ Temporary inputs and outputs are removed automatically. Process-level measuremen
 
 ## Third-party software
 
-See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations. BZIP3 is statically linked under LGPLv3; the [licensing and relinking section](THIRD_PARTY.md#bzip3-licensing-and-relinking) grants the necessary application-code permissions and explains how to rebuild with a modified library.
+See [THIRD_PARTY.md](THIRD_PARTY.md) for dependency attribution and license locations. BZIP3 is statically linked under LGPLv3 and wimlib under LGPL-2.1-or-later; the [licensing and relinking section](THIRD_PARTY.md#bzip3-and-wimlib-licensing-and-relinking) grants the necessary application-code permissions and explains how to rebuild with a modified library.
 
 Every binary release must provide the matching `pakr-source-<version>.tar.gz` with application and dependency sources, license texts and rebuild materials. The executable remains a single binary; the source bundle is a distribution obligation, not a runtime dependency.

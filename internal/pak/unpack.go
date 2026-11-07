@@ -72,7 +72,18 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 				inputSource = buffered
 			}
 
-			_, err = copying.copy(temporary, inputSource)
+			if options.Format.Container == "wim" {
+				limit := wimSpoolLimit(options.Limits)
+
+				var count int64
+
+				count, err = copying.copy(temporary, io.LimitReader(inputSource, limit+1))
+				if err == nil && count > limit {
+					err = fmt.Errorf("WIM stdin exceeds spool limit of %d bytes: %w", limit, ErrExtractionLimit)
+				}
+			} else {
+				_, err = copying.copy(temporary, inputSource)
+			}
 
 			err = closeWithError(temporary, err)
 			if err != nil {
@@ -119,6 +130,10 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 		}
 	}
 
+	if options.Image != 0 && options.Format.Container != "wim" {
+		return errors.New("--image requires a WIM or ESD archive")
+	}
+
 	if output == "-" && options.Format.Name == "knz" {
 		return unpackKanziStdout(source, options, budget, progress)
 	}
@@ -140,6 +155,8 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	extract := extractor{root: root, budget: budget, copying: &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}}
 
 	switch options.Format.Container {
+	case "wim":
+		err = unpackWIM(input, file, size, options, &extract)
 	case "zip":
 		err = unpackZip(file, size, options.Threads, &extract)
 	case "7z":
@@ -421,6 +438,8 @@ func detectHeader(data []byte) (Format, error) {
 	name := ""
 
 	switch {
+	case bytes.HasPrefix(data, []byte("MSWIM\x00\x00\x00")):
+		name = "wim"
 	case bytes.HasPrefix(data, []byte("MSCF")):
 		name = "cab"
 	case bytes.HasPrefix(data, []byte("!<arch>\n")):

@@ -62,10 +62,23 @@ build_kanzi() {
 	touch "$prefix/.kanzi-$bridge_signature"
 }
 
+build_wim() {
+	local bridge_signature
+	bridge_signature=$(cat "$root/scripts/wimlib/CMakeLists.txt" "$root/internal/native/wim/wim.c" "$root/internal/native/wim.h"; printf '%s' "$signature")
+	bridge_signature=$(printf '%s' "$bridge_signature" | sha256sum | cut -d ' ' -f 1)
+	if [[ -f "$prefix/.wim-$bridge_signature" && -f "$prefix/lib/libwim.a" ]]; then
+		return
+	fi
+	build_cmake wim "$root/scripts/wimlib" -DSOURCE="$root/.native/src/wimlib"
+	rm -f "$prefix"/.wim-*
+	touch "$prefix/.wim-$bridge_signature"
+}
+
 if [[ -f "$prefix/.complete-$signature" ]]; then
 	printf 'Native libraries ready: %s/%s\n' "$target" "$arch"
 	build_parallel
 	build_kanzi
+	build_wim
 	exit 0
 fi
 
@@ -118,3 +131,4 @@ rm -f "$prefix"/.complete-*
 touch "$prefix/.complete-$signature"
 build_parallel
 build_kanzi
+build_wim
