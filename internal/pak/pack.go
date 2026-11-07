@@ -29,12 +29,12 @@ type Options struct {
 }
 
 func Pack(ctx context.Context, inputs []string, options Options, stdout io.Writer) error {
-	if options.Format.Name == "zipx" || options.Format.Container == "rar" {
+	if options.Format.extractionOnly() {
 		return fmt.Errorf("%s is extraction-only; archive creation is not supported", options.Format.Name)
 	}
 
 	outputFormat, _ := InferFormat(options.Output)
-	if outputFormat.Name == "zipx" || outputFormat.Container == "rar" {
+	if outputFormat.extractionOnly() {
 		return fmt.Errorf("%s is extraction-only; archive creation is not supported", outputFormat.Name)
 	}
 

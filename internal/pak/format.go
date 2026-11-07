@@ -19,6 +19,17 @@ var formats = map[string]Format{
 	"zipx":   {Name: "zipx", Container: "zip"},
 	"rar":    {Name: "rar", Container: "rar"},
 	"7z":     {Name: "7z", Container: "7z"},
+	"cab":    {Name: "cab", Container: "cab"},
+	"iso":    {Name: "iso", Container: "iso"},
+	"cpio":   {Name: "cpio", Container: "cpio"},
+	"ar":     {Name: "ar", Container: "ar"},
+	"a":      {Name: "ar", Container: "ar"},
+	"deb":    {Name: "deb", Container: "ar"},
+	"lha":    {Name: "lha", Container: "lha"},
+	"lzh":    {Name: "lha", Container: "lha"},
+	"rpm":    {Name: "rpm", Container: "rpm"},
+	"z":      {Name: "Z", Container: "raw"},
+	"lzma":   {Name: "lzma", Container: "raw"},
 	"gz":     {Name: "gz", Codec: native.Gzip},
 	"gzip":   {Name: "gz", Codec: native.Gzip},
 	"zst":    {Name: "zst", Codec: native.Zstd},
@@ -50,13 +61,34 @@ var aliases = map[string]string{
 	"tzst": "tar.zst",
 }
 
+func (format Format) extractionOnly() bool {
+	return format.Name == "zipx" || format.Container == "rar" || format.nativeExtraction()
+}
+
+func (format Format) nativeExtraction() bool {
+	switch format.Container {
+	case "cab", "iso", "cpio", "ar", "lha", "rpm", "raw":
+		return true
+	default:
+		return false
+	}
+}
+
 func ParseFormat(name string) (Format, error) {
 	name = strings.TrimPrefix(strings.ToLower(name), ".")
 	if canonical, ok := aliases[name]; ok {
 		name = canonical
 	}
 
-	suffix, compound := strings.CutPrefix(name, "tar.")
+	suffix, compound := strings.CutPrefix(name, "cpio.")
+	if compound {
+		codec, ok := formats[suffix]
+		if ok && (codec.Codec == native.Gzip || codec.Codec == native.Bzip2 || codec.Codec == native.XZ || codec.Codec == native.Zstd) {
+			return Format{Name: "cpio." + codec.Name, Container: "cpio", Codec: codec.Codec}, nil
+		}
+	}
+
+	suffix, compound = strings.CutPrefix(name, "tar.")
 	if compound {
 		codec, ok := formats[suffix]
 		if ok && codec.Codec != 0 {
@@ -68,7 +100,7 @@ func ParseFormat(name string) (Format, error) {
 		return format, nil
 	}
 
-	return Format{}, fmt.Errorf("unknown format %q (use tar, zip, zipx, rar, 7z, gz, zst, bz2, bz3, bsc, knz, xz, lz, lz4, br or tar.<codec>)", name)
+	return Format{}, fmt.Errorf("unknown format %q (see --formats for supported archives, codecs and combinations)", name)
 }
 
 func InferFormat(name string) (Format, error) {

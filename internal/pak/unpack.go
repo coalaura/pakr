@@ -49,12 +49,15 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 			}
 
 			options.Format, err = detectHeader(header)
-			if err != nil {
-				return err
+			if err == nil {
+				source, options.Format, err = probeCPIOStream(buffered, options.Format)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
-		if options.Format.Container == "zip" || options.Format.Container == "7z" || options.Format.Container == "rar" || options.Format.Codec == native.BSC {
+		if options.Format.Name == "" || options.Format.nativeExtraction() || options.Format.Container == "zip" || options.Format.Container == "7z" || options.Format.Container == "rar" || options.Format.Codec == native.BSC {
 			temporary, err := os.CreateTemp("", "pakr-input-*")
 			if err != nil {
 				return err
@@ -64,7 +67,12 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 
 			copying := copier{ctx: ctx, buffer: make([]byte, native.BufferSize)}
 
-			_, err = copying.copy(temporary, buffered)
+			inputSource := source
+			if inputSource == nil {
+				inputSource = buffered
+			}
+
+			_, err = copying.copy(temporary, inputSource)
 
 			err = closeWithError(temporary, err)
 			if err != nil {
@@ -72,7 +80,8 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 			}
 
 			input = temporary.Name()
-		} else {
+			source = nil
+		} else if source == nil {
 			source = buffered
 		}
 	}
@@ -99,7 +108,9 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 
 		if options.Format.Name == "" {
 			options.Format, err = InferFormat(input)
-			if err != nil {
+			probeCPIO := options.Format.Container == "" && (options.Format.Codec == native.Gzip || options.Format.Codec == native.Bzip2 || options.Format.Codec == native.XZ || options.Format.Codec == native.Zstd)
+
+			if err != nil || probeCPIO {
 				options.Format, err = detectFormat(file)
 				if err != nil {
 					return err
@@ -140,6 +151,15 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 		if err == nil {
 			err = unpackArchive(input, info.format, info.entries, &extract)
 		}
+	case "iso":
+		err = validateISO(file, size)
+		if err == nil {
+			err = unpackArchive(input, options.Format.Name, -1, &extract)
+		}
+	case "cab", "cpio", "ar", "lha", "rpm":
+		err = unpackArchive(input, options.Format.Name, -1, &extract)
+	case "raw":
+		err = unpackLegacyStream(input, inputName, options.Format.Name, &extract)
 	default:
 		err = unpackStream(source, file, size, inputName, options, &extract)
 	}
@@ -234,18 +254,7 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 		return err
 	}
 
-	name := filepath.Base(input)
-	extension := filepath.Ext(name)
-
-	if input == "-" {
-		name = "stdin"
-	} else if extension == "" {
-		name += ".out"
-	} else {
-		name = strings.TrimSuffix(name, extension)
-	}
-
-	header := native.Header{Name: name, Size: -1, Mode: 0o644}
+	header := native.Header{Name: rawOutputName(input), Size: -1, Mode: 0o644}
 
 	if decoded, ok := codec.(*native.BSCReader); ok {
 		header.Size = decoded.Size()
@@ -299,6 +308,19 @@ func unpackArchive(input, format string, entries int64, extract *extractor) (res
 		result = errors.Join(result, archive.Close())
 	}()
 
+	cpio := format == "rpm" || strings.HasPrefix(format, "cpio")
+
+	var links cpioLinks
+
+	if cpio {
+		// Count entries on arrival, including deferred payload-last hardlinks.
+		extract.prechecked = true
+
+		defer func() {
+			extract.prechecked = false
+		}()
+	}
+
 	for {
 		err = extract.copying.ctx.Err()
 		if err != nil {
@@ -309,6 +331,13 @@ func unpackArchive(input, format string, entries int64, extract *extractor) (res
 		if errors.Is(err, io.EOF) {
 			if entries > 0 {
 				return errors.New("native decoder omitted RAR entries")
+			}
+
+			if cpio {
+				err = finishCPIO(archive, &links, extract)
+				if err != nil {
+					return err
+				}
 			}
 
 			return archive.Close()
@@ -326,11 +355,54 @@ func unpackArchive(input, format string, entries int64, extract *extractor) (res
 			entries--
 		}
 
-		err = extract.entry(header, archive)
+		if cpio {
+			err = extract.budget.entry(header.Size)
+			if err == nil {
+				err = links.entry(header, archive, extract)
+			}
+		} else {
+			err = extract.entry(header, archive)
+		}
+
 		if err != nil {
 			return err
 		}
 	}
+}
+
+func probeCPIOStream(input *bufio.Reader, format Format) (io.Reader, Format, error) {
+	switch format.Codec {
+	case native.Gzip, native.Bzip2, native.XZ, native.Zstd:
+	default:
+		return input, format, nil
+	}
+
+	var recorded bytes.Buffer
+
+	decoder, err := native.NewReader(io.TeeReader(input, &recorded), format.Codec, 1)
+	if err != nil {
+		return nil, Format{}, err
+	}
+
+	var header [6]byte
+
+	count, readErr := io.ReadFull(decoder, header[:])
+
+	closeErr := decoder.Close()
+
+	source := io.MultiReader(bytes.NewReader(recorded.Bytes()), input)
+
+	inner, _ := detectHeader(header[:count])
+	if inner.Container == "cpio" {
+		inner, err = ParseFormat("cpio." + format.Name)
+		return source, inner, err
+	}
+
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return nil, Format{}, errors.Join(readErr, closeErr)
+	}
+
+	return source, format, closeErr
 }
 
 func detectFormat(file *os.File) (Format, error) {
@@ -341,13 +413,58 @@ func detectFormat(file *os.File) (Format, error) {
 		return Format{}, err
 	}
 
-	return detectHeader(header[:count])
+	format, err := detectHeader(header[:count])
+	if err != nil {
+		count, readErr := file.ReadAt(header[:7], 16*2048)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return Format{}, readErr
+		}
+
+		if count == 7 && string(header[1:6]) == "CD001" && header[6] == 1 {
+			return ParseFormat("iso")
+		}
+
+		return Format{}, err
+	}
+
+	switch format.Codec {
+	case native.Gzip, native.Bzip2, native.XZ, native.Zstd:
+		reader, openErr := native.NewReader(io.NewSectionReader(file, 0, 1<<63-1), format.Codec, 1)
+		if openErr != nil {
+			return Format{}, openErr
+		}
+
+		defer reader.Close()
+
+		count, readErr := io.ReadFull(reader, header[:6])
+
+		inner, _ := detectHeader(header[:count])
+		if inner.Container == "cpio" {
+			return ParseFormat("cpio." + format.Name)
+		}
+
+		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+			return Format{}, readErr
+		}
+	}
+
+	return format, nil
 }
 
 func detectHeader(data []byte) (Format, error) {
 	name := ""
 
 	switch {
+	case bytes.HasPrefix(data, []byte("MSCF")):
+		name = "cab"
+	case bytes.HasPrefix(data, []byte("!<arch>\n")):
+		name = "ar"
+	case bytes.HasPrefix(data, []byte{0xed, 0xab, 0xee, 0xdb}):
+		name = "rpm"
+	case bytes.HasPrefix(data, []byte("070701")), bytes.HasPrefix(data, []byte("070702")), bytes.HasPrefix(data, []byte("070707")), bytes.HasPrefix(data, []byte{0xc7, 0x71}), bytes.HasPrefix(data, []byte{0x71, 0xc7}):
+		name = "cpio"
+	case bytes.HasPrefix(data, []byte{0x1f, 0x9d}):
+		name = "Z"
 	case bytes.HasPrefix(data, []byte{0x1f, 0x8b}):
 		name = "gz"
 	case bytes.HasPrefix(data, []byte{0x28, 0xb5, 0x2f, 0xfd}):
@@ -375,8 +492,23 @@ func detectHeader(data []byte) (Format, error) {
 	case len(data) >= 262 && string(data[257:262]) == "ustar":
 		name = "tar"
 	default:
-		return Format{}, errors.New("unrecognized archive; specify --format (required for brotli and extensionless compressed tar)")
+		return Format{}, errors.New("unrecognized archive; specify --format (required for brotli, legacy lzma, LHA and extensionless compressed tar)")
 	}
 
 	return ParseFormat(name)
+}
+
+func rawOutputName(input string) string {
+	if input == "-" {
+		return "stdin"
+	}
+
+	name := filepath.Base(input)
+
+	extension := filepath.Ext(name)
+	if extension == "" {
+		return name + ".out"
+	}
+
+	return strings.TrimSuffix(name, extension)
 }

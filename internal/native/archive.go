@@ -5,6 +5,7 @@ package native
 #include <archive_entry.h>
 #include <locale.h>
 #include <stdlib.h>
+int pakr_archive_read_tail(struct archive *archive);
 typedef __LA_MODE_T pakr_mode_t;
 #ifdef _WIN32
 #include <windows.h>
@@ -60,11 +61,13 @@ type Header struct {
 	Mode     uint32
 	Modified time.Time
 	Kind     int
+	Links    uint32
 }
 
 type Archive struct {
 	archive *C.struct_archive
 	writing bool
+	filter  int
 }
 
 // libarchive converts entry names through the C locale. Initialize it before
@@ -155,6 +158,7 @@ func (archive *Archive) Next() (Header, error) {
 		Size:     int64(C.archive_entry_size(entry)),
 		Mode:     uint32(C.archive_entry_perm(entry)),
 		Modified: time.Unix(int64(C.archive_entry_mtime(entry)), int64(C.archive_entry_mtime_nsec(entry))),
+		Links:    uint32(C.archive_entry_nlink(entry)),
 	}
 
 	if C.archive_entry_size_is_set(entry) == 0 {
@@ -218,6 +222,17 @@ func (archive *Archive) Read(data []byte) (int, error) {
 	return int(count), nil
 }
 
+// ReadTail validates CPIO padding and forces outer filters through their trailers.
+// Each call is bounded so the caller can check cancellation between blocks.
+func (archive *Archive) ReadTail() error {
+	status := C.pakr_archive_read_tail(archive.archive)
+	if status == C.ARCHIVE_EOF {
+		return io.EOF
+	}
+
+	return archive.check(status)
+}
+
 func (archive *Archive) Close() error {
 	if archive.archive == nil {
 		return nil
@@ -262,12 +277,28 @@ func (archive *Archive) failure() error {
 	return errors.New(C.GoString(message))
 }
 
+func (archive *Archive) cpioFilters(format string) C.int {
+	filters := []int{int(C.ARCHIVE_FILTER_GZIP), int(C.ARCHIVE_FILTER_BZIP2), int(C.ARCHIVE_FILTER_XZ), int(C.ARCHIVE_FILTER_ZSTD)}
+
+	if format == "rpm" {
+		filters = append(filters, int(C.ARCHIVE_FILTER_RPM), int(C.ARCHIVE_FILTER_LZMA))
+	}
+
+	for _, filter := range filters {
+		status := C.archive_read_support_filter_by_code(archive.archive, C.int(filter))
+		if status != C.ARCHIVE_OK {
+			return status
+		}
+	}
+
+	return C.ARCHIVE_OK
+}
+
 func OpenArchive(path string, writing bool, level, threads int) (*Archive, error) {
 	return openArchive(path, "7z", writing, level, threads)
 }
 
-// OpenArchiveReader enables only the selected container. These containers do
-// their own decompression and require no outer compression filters.
+// OpenArchiveReader enables only the selected container and its applicable filters.
 func OpenArchiveReader(path, format string) (*Archive, error) {
 	return openArchive(path, format, false, 3, 1)
 }
@@ -322,6 +353,57 @@ func openArchive(path, format string, writing bool, level, threads int) (*Archiv
 			}
 		case "rar5":
 			status = C.archive_read_support_format_rar5(archive.archive)
+		case "cab":
+			status = C.archive_read_support_format_cab(archive.archive)
+		case "iso":
+			status = C.archive_read_support_format_iso9660(archive.archive)
+		case "ar", "deb":
+			status = C.archive_read_support_format_ar(archive.archive)
+		case "lha":
+			status = C.archive_read_support_format_lha(archive.archive)
+		case "cpio", "rpm", "cpio.gz", "cpio.bz2", "cpio.xz", "cpio.zst":
+			status = C.archive_read_support_format_cpio(archive.archive)
+			if status == C.ARCHIVE_OK {
+				// CPIO has no charset marker; use UTF-8 rather than the Windows OEM default.
+				options := C.CString("cpio:hdrcharset=UTF-8")
+				status = C.archive_read_set_options(archive.archive, options)
+
+				C.free(unsafe.Pointer(options))
+			}
+
+			if status == C.ARCHIVE_OK {
+				status = archive.cpioFilters(format)
+			}
+
+			switch format {
+			case "rpm":
+				archive.filter = int(C.ARCHIVE_FILTER_RPM)
+			case "cpio.gz":
+				archive.filter = int(C.ARCHIVE_FILTER_GZIP)
+			case "cpio.bz2":
+				archive.filter = int(C.ARCHIVE_FILTER_BZIP2)
+			case "cpio.xz":
+				archive.filter = int(C.ARCHIVE_FILTER_XZ)
+			case "cpio.zst":
+				archive.filter = int(C.ARCHIVE_FILTER_ZSTD)
+			}
+		case "Z", "lzma":
+			status = C.archive_read_support_format_raw(archive.archive)
+			if status == C.ARCHIVE_OK {
+				// The empty reader accepts correctly decoded empty streams.
+				status = C.archive_read_support_format_empty(archive.archive)
+			}
+
+			archive.filter = int(C.ARCHIVE_FILTER_COMPRESS)
+
+			if format == "lzma" {
+				archive.filter = int(C.ARCHIVE_FILTER_LZMA)
+			}
+
+			if status == C.ARCHIVE_OK {
+				// Force the selected decoder: raw bidding must never return encoded bytes.
+				status = C.archive_read_append_filter(archive.archive, C.int(archive.filter))
+			}
 		default:
 			archive.Close()
 
@@ -341,6 +423,21 @@ func openArchive(path, format string, writing bool, level, threads int) (*Archiv
 		err = archive.check(C.pakr_archive_open(archive.archive, name, write))
 
 		C.free(unsafe.Pointer(name))
+	}
+
+	if err == nil && archive.filter != 0 {
+		found := false
+		count := int(C.archive_filter_count(archive.archive))
+
+		for index := range count {
+			if int(C.archive_filter_code(archive.archive, C.int(index))) == archive.filter {
+				found = true
+			}
+		}
+
+		if !found {
+			err = fmt.Errorf("input is not a %s stream", format)
+		}
 	}
 
 	if err != nil {

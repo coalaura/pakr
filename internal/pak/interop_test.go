@@ -189,6 +189,53 @@ func TestReferenceArchives(t *testing.T) {
 	}
 }
 
+func TestReferenceLegacyArchives(t *testing.T) {
+	tool, err := exec.LookPath("bsdtar")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []legacyCase{
+		{fixture: "cab_1.cab", format: "cab", name: "dir1/file1"},
+		{fixture: "cab_2.cab", format: "cab", name: "zero"},
+		{fixture: "cab_3.cab", format: "cab", name: "zero"},
+		{fixture: "iso_joliet.iso", format: "iso", name: "hardlink"},
+		{fixture: "iso_joliet_rockridge.iso", format: "iso", name: "hardlink"},
+		{fixture: "newc.cpio.gz", format: "cpio.gz", name: "dir/file"},
+		{fixture: "newc.cpio.bz2", format: "cpio.bz2", name: "dir/file"},
+		{fixture: "newc.cpio.xz", format: "cpio.xz", name: "dir/file"},
+		{fixture: "newc.cpio.zst", format: "cpio.zst", name: "dir/file"},
+		{fixture: "crc.cpio", format: "cpio", name: "dir/file"},
+		{fixture: "odc.cpio", format: "cpio", name: "dir/file"},
+		{fixture: "cpio_bin_le.cpio", format: "cpio", name: "file1111222233334444"},
+		{fixture: "cpio_bin_be.cpio", format: "cpio", name: "file1111222233334444"},
+		{fixture: "ar.ar", format: "ar", name: "hhhhjjjjkkkkllll.o"},
+		{fixture: "arbsd.ar", format: "ar", name: "a-long-unix-archive-member.txt"},
+		{fixture: "package.deb", format: "deb", name: "data.tar.xz"},
+		{fixture: "lha_lh6.lzh", format: "lha", name: "file1"},
+		{fixture: "lha_lh7.lzh", format: "lha", name: "file1"},
+		{fixture: "cpio_svr4_gzip_rpm.rpm", format: "rpm", name: "./etc/file1"},
+		{fixture: "cpio_svr4_bzip2_rpm.rpm", format: "rpm", name: "./etc/file1"},
+	}
+
+	for _, item := range cases {
+		t.Run(item.fixture, func(t *testing.T) {
+			data := legacyFixture(t, item.fixture)
+
+			decoder := exec.CommandContext(t.Context(), tool, "-xOf", "-", item.name)
+			decoder.Stdin = bytes.NewReader(data)
+
+			expected, err := decoder.Output()
+			if err != nil {
+				t.Fatalf("reference decode: %v", err)
+			}
+
+			output := unpackFixture(t, data, item.format)
+			assertArchiveFile(t, output, item.name, expected)
+		})
+	}
+}
+
 func TestReferenceSeekable(t *testing.T) {
 	base := t.TempDir()
 	input := filepath.Join(base, "input")

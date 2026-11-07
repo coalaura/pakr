@@ -49,3 +49,8 @@ if [[ ! -f "$cache/src/libarchive/.pakr-rar-checksum" ]]; then
 	patch -d "$cache/src/libarchive" -p1 < "$root/scripts/patches/libarchive-rar-checksum.patch"
 	touch "$cache/src/libarchive/.pakr-rar-checksum"
 fi
+
+if [[ ! -f "$cache/src/libarchive/.pakr-extraction" ]]; then
+	patch -d "$cache/src/libarchive" -p1 < "$root/scripts/patches/libarchive-extraction.patch"
+	touch "$cache/src/libarchive/.pakr-extraction"
+fi

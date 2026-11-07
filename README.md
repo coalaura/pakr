@@ -55,9 +55,9 @@ Kanzi also accepts a raw byte stream from stdin: `pakr pack - -f knz -o -`. Use 
 
 ### Unpacking
 
-`pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable magic bytes. Specify `-f` for Brotli without an extension or compressed tar from stdin or a file without a recognized extension.
+`pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable signatures, including ISO9660 volume descriptors and CPIO inside gzip/BZIP2/XZ/ZSTD. Specify `-f` for Brotli, LHA/LZH or legacy LZMA without an extension, or compressed tar from stdin or a file without a recognized extension.
 
-Stdin is streamed directly for sequential formats; ZIP/ZIPX, RAR, 7z and BSC require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
+Explicit and automatically detected sequential codec/tar formats stream directly from stdin; automatic detection probes compressed input for CPIO without spooling ordinary streams. ZIP/ZIPX, RAR, 7z, BSC, compressed CPIO and the extraction-only libarchive formats require temporary-file spooling. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
 
 ### Extraction limits
 
@@ -124,13 +124,20 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 | `zip` | [Go ZIP container](https://github.com/golang/go/tree/master/src/archive/zip); [libdeflate](https://github.com/ebiggers/libdeflate) or streaming [zlib-ng](https://github.com/zlib-ng/zlib-ng) | [Go ZIP container](https://github.com/golang/go/tree/master/src/archive/zip); [libdeflate](https://github.com/ebiggers/libdeflate) or streaming [zlib-ng](https://github.com/zlib-ng/zlib-ng); [libarchive](https://github.com/libarchive/libarchive) for advanced methods |
 | `zipx` | Extraction only | ZIP container with advanced methods through [libarchive](https://github.com/libarchive/libarchive) |
 | `rar` | Extraction only | RAR4/RAR5 through [libarchive](https://github.com/libarchive/libarchive) |
+| `cab` | Extraction only | CAB Store, MSZIP and LZX through [libarchive](https://github.com/libarchive/libarchive) |
+| `iso` | Extraction only | ISO9660, Rock Ridge and Joliet through [libarchive](https://github.com/libarchive/libarchive) |
+| `cpio`, `cpio.gz`, `cpio.bz2`, `cpio.xz`, `cpio.zst` | Extraction only | CPIO newc, crc, odc and binary through [libarchive](https://github.com/libarchive/libarchive) |
+| `ar`, `a`, `deb` | Extraction only | GNU/BSD AR through [libarchive](https://github.com/libarchive/libarchive); DEB outer members only |
+| `lha`, `lzh` | Extraction only | Supported LHA methods through [libarchive](https://github.com/libarchive/libarchive) |
+| `rpm` | Extraction only | RPM's compressed CPIO payload through [libarchive](https://github.com/libarchive/libarchive) |
+| `Z`, `lzma` | Extraction only | Unix compress and LZMA-Alone streams through [libarchive](https://github.com/libarchive/libarchive) |
 | `lz4` | [liblz4](https://github.com/lz4/lz4) multithreaded frame API | [liblz4](https://github.com/lz4/lz4) frame API |
 | `7z` | [libarchive](https://github.com/libarchive/libarchive) with LZMA2 | [libarchive](https://github.com/libarchive/libarchive) |
 | `br`, `brotli` | [libbrotlienc](https://github.com/google/brotli) | [libbrotlidec](https://github.com/google/brotli) |
 
 ### Tar combinations and aliases
 
-Every raw codec can be combined with tar:
+Every creation-capable raw codec can be combined with tar:
 
 | Format | Short aliases |
 | --- | --- |
@@ -178,11 +185,23 @@ An end header is required to detect truncation, so legacy RAR4 archives without 
 
 </details>
 
+### Legacy archives and packages
+
+CAB, ISO9660, CPIO, AR/DEB, LHA/LZH, RPM, `.Z` and `.lzma` are extraction-only, including when inferred from the output filename. They use the existing statically linked libarchive 3.8.11 without runtime executables. Files, directories, safe links and available permission/modification-time metadata use the same contained, no-overwrite extractor and limits as other archives.
+
+- CAB supports Store, MSZIP and LZX. Multipart cabinets, Quantum and encrypted entries fail explicitly.
+- ISO9660 supports Rock Ridge and Joliet, with volume-size validation. UDF, mounting and special device entries are unsupported.
+- CPIO supports newc, checksum-bearing crc, odc and both binary byte orders, including payload-last hardlinks. Compressed CPIO is detected even with only `.gz`, `.bz2`, `.xz` or `.zst` extensions; an explicit raw codec format overrides that detection. Trailers are required; only up to 1 MiB of zero padding after the trailer is accepted, not concatenated CPIO archives.
+- AR supports GNU string tables and BSD extended names. DEB extracts the actual `debian-binary`, `control.tar.*` and `data.tar.*` members without recursively extracting or installing them.
+- RPM extracts the CPIO payload, using gzip, BZIP2, XZ, ZSTD or legacy LZMA filters. It does not install packages, verify signatures or access an RPM database.
+- LHA/LZH compatibility follows libarchive's methods. Unicode names are supported; legacy codepages depend on the platform. Static Unix builds have no iconv dependency and reject unsupported encodings instead of silently changing names.
+- `.Z` and LZMA-Alone produce one raw file, including empty streams. Invalid headers and decoder failures are rejected; these formats have no payload checksum, so not every corruption is detectable. In particular, `.Z` has no uncompressed-size or end marker and cannot reliably detect truncation. LZMA trailing data is rejected. Use `-f lzma` or `-f lha` for piped/extensionless input.
+
 ## Performance and memory
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
 
-`--memory` applies to BSC, BZIP3, Kanzi and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive's 7z, advanced ZIP and RAR decoders are outside them. BSC's block index is included in its budget.
+`--memory` applies to BSC, BZIP3, Kanzi and Lzip for both packing and unpacking. Other codecs use fixed budgets. These are codec working-memory budgets, not whole-process RSS guarantees; metadata, other parallel decoder indexes and libarchive decoders are outside them. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
 
 ### Compression levels
 
@@ -464,8 +483,6 @@ Temporary inputs and outputs are removed automatically. Process-level measuremen
 
 ## TODOs
 
-- Add CAB extraction.
-- Add ISO9660 extraction.
 - Add WIM / ESD extraction.
 - Support PPMd for packing and unpacking.
 - Investigate [fast-lzma2](https://github.com/conor42/fast-lzma2) for XZ / 7z improvements.

@@ -11,6 +11,14 @@ gz      Fast       Fast       Moderate
 zip     Fast       Fast       Moderate
 zipx    -          Varies     Varies
 rar     -          Varies     Varies
+cab     -          Varies     Varies
+iso     -          Fast       None
+cpio    -          Fast       None
+ar/deb  -          Fast       None
+lha     -          Varies     Varies
+rpm     -          Varies     Varies
+Z       -          Fast       Modest
+lzma    -          Moderate   Very high
 bz2     Slow       Moderate   Moderate-high
 bz3     Moderate   Moderate   Very high
 bsc     Moderate   Moderate   Very high
@@ -26,10 +34,18 @@ Choosing a format
   - Broad desktop compatibility: zip
   - Raw codecs take one file; use tar.<codec> for multiple files or folders.
 
-Extraction-only formats
-  - ZIPX (also advanced ZIP): Store, Deflate, BZIP2, LZMA, ZSTD, XZ and PPMd.
-  - RAR4/RAR5: single-volume archives supported by libarchive; RAR4 solid and unsupported RAR5 solid variants are rejected.
-  - Encryption, multipart RAR, MP3/JPEG/WavPack ZIP and Deflate64 are unsupported.
+Format notes
+  - A dash under Compress means extraction-only.
+  - Encrypted archives are unsupported.
+  - ZIP/ZIPX: Deflate64 and MP3/JPEG/WavPack methods are unsupported.
+  - RAR: no multipart or RAR4 solid archives; RAR5 solid support is limited.
+  - CAB: no multipart or Quantum-compressed cabinets.
+  - ISO: no UDF images.
+  - Compressed CPIO: cpio.gz, cpio.bz2, cpio.xz and cpio.zst.
+  - DEB: outer AR members only. RPM: CPIO payload only.
+  - LHA/LZH: legacy filename encodings may be unsupported on static Unix builds.
+  - .Z: truncation cannot always be detected.
+  - Piped or extensionless Brotli, LHA, LZMA and compressed tar require --format.
 
 Compression settings
   - Ratings assume level 3 and vary with input, threads and hardware. Higher levels can be much slower.
