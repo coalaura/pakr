@@ -448,9 +448,11 @@ bash scripts/build.sh linux amd64 test -tags integration
 bash scripts/build.sh linux amd64 test -run '^$' -bench . -benchmem
 ```
 
-Integration tests require `gzip`, `zstd`, `bzip2`, `bzip3`, `xz`, `lzip`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI` or `LZIP_CLI` to an official executable outside `PATH` if needed.
+Integration tests require `gzip`, `uncompress`, `zstd`, `bzip2`, `bzip3`, `xz`, `lzip`, `lz4`, `brotli` and `bsdtar` on `PATH`. Set `BZIP3_CLI` or `LZIP_CLI` to an official executable outside `PATH` if needed. Legacy creation checks also use GNU `cpio`, GNU `ar` and `xorriso`; these may skip locally when absent but are required with `CI=true`. BSD `cpio` and LLVM `ar` are additional optional readers. Linux CI installs and checks the required tools, including independent Rock Ridge and Joliet extraction with `xorriso`.
 
 Tests cover native backends, independently generated fixtures, archive round trips, truncated streams, Unicode paths, overwrite refusal, path traversal and CLI pipelines. The integration-only `TestBzip3BlockLevels` exercises native allocations at every level and needs several GiB of free memory.
+
+The test workflow also cross-compiles a focused native-writer suite with `GOEXPERIMENT=cgocheck2` and runs it on Windows and macOS amd64 runners. It checks final-write cancellation, callback errors and short writes, ISO staging failures and cleanup, and LZMA finalization. The full external-tool interoperability matrix runs on Linux; arm64 targets have release cross-build coverage but no native-writer runtime CI job.
 
 Benchmarks report throughput, Go allocations and output/input size. Use representative data on your deployment platform when choosing settings.
 

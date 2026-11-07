@@ -31,11 +31,16 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --workdir "$GITHUB_WORKSPACE" \
-            --env BUILD_IMAGE --env JOBS=2 \
+            --env BUILD_IMAGE --env JOBS=2 --env CI=true \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint sh "$BUILD_IMAGE" -ec '
               trap '\''chown -R "$HOST_UID:$HOST_GID" .native'\'' EXIT
-              apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools
+              apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools cpio xorriso binutils
+              for tool in cpio xorriso gzip uncompress xz bsdtar ar; do
+                command -v "$tool"
+              done
+              cpio --version | grep -q "GNU cpio"
+              ar --version | grep -q "GNU ar"
               bash scripts/native.sh linux amd64
               cmake -S .native/src/bzip3 -B .native/build/bzip3-cli \
                 -DCMAKE_TOOLCHAIN_FILE="$PWD/.native/build/linux-amd64/toolchain/toolchain.cmake" \
@@ -57,5 +62,81 @@ jobs:
               export BZIP3_CLI="$PWD/.native/build/bzip3-cli/bzip3"
               export BSC_CLI="$PWD/.native/build/bsc-reference/build/bsc"
               bash scripts/build.sh linux amd64 test -count=1
-              bash scripts/build.sh linux amd64 test -tags=integration -count=1
+              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v
             '
+
+  native-build:
+    name: Native runtime test binary (${{ matrix.os }}/amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows, darwin]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache native dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            .native/downloads
+            .native/${{ matrix.os }}-amd64
+          key: native-${{ matrix.os }}-amd64-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h') }}
+
+      - name: Cross-compile native tests
+        env:
+          PAKR_TARGET_OS: ${{ matrix.os }}
+          BUILD_IMAGE: coalaura/builder:latest${{ matrix.os == 'darwin' && '-macos' || '' }}
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE" \
+            --env PAKR_TARGET_OS --env BUILD_IMAGE --env JOBS=2 --env GOEXPERIMENT=cgocheck2 \
+            --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
+            --entrypoint bash "$BUILD_IMAGE" -ec '
+              trap '\''chown -R "$HOST_UID:$HOST_GID" .native dist'\'' EXIT
+              apk add --no-cache build-base cmake coreutils curl patch tar xz
+              bash scripts/native.sh "$PAKR_TARGET_OS" amd64
+              source ".native/build/$PAKR_TARGET_OS-amd64/toolchain/env.sh"
+              mkdir -p dist
+              suffix=
+              if [ "$PAKR_TARGET_OS" = windows ]; then suffix=.exe; fi
+              go test "${GO_BUILD_FLAGS[@]}" -ldflags "$GO_LDFLAGS" -c -o "dist/native.test$suffix" ./internal/native
+            '
+
+      - name: Upload native test binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-tests-${{ matrix.os }}-amd64
+          path: dist/native.test*
+          if-no-files-found: error
+
+  native-runtime:
+    name: Native writer runtime (${{ matrix.os }}/amd64)
+    needs: native-build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: windows-2025
+          - os: darwin
+            runner: macos-15-intel
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-tests-${{ matrix.os }}-amd64
+
+      - name: Windows native writer tests
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: .\native.test.exe -test.v -test.count=1 -test.timeout=5m -test.run='^Test(ArchiveWriter|CompressEmptyFraming|LZMAWriter|ISOStaging)'
+
+      - name: macOS native writer tests
+        if: matrix.os == 'darwin'
+        run: |
+          chmod +x native.test
+          ./native.test -test.v -test.count=1 -test.timeout=5m -test.run='^Test(ArchiveWriter|CompressEmptyFraming|LZMAWriter|ISOStaging)'

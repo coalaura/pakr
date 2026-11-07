@@ -110,8 +110,11 @@ func TestArchiveWriterFailures(t *testing.T) {
 			}
 
 			err = writer.WriteHeader(Header{Name: "file", Mode: 0o644, Modified: time.Unix(1, 0)})
-			err = errors.Join(err, writer.Close())
+			if err != nil {
+				t.Fatal(writer.Abort(err))
+			}
 
+			err = writer.Close()
 			if !errors.Is(err, wanted) {
 				t.Fatalf("lost output error: %v", err)
 			}
@@ -136,8 +139,11 @@ func TestArchiveWriterFailures(t *testing.T) {
 			}
 
 			err = writer.WriteHeader(Header{Name: "file", Mode: 0o644, Modified: time.Unix(1, 0)})
-			err = errors.Join(err, writer.Close())
+			if err != nil {
+				t.Fatal(writer.Abort(err))
+			}
 
+			err = writer.Close()
 			if !errors.Is(err, io.ErrShortWrite) {
 				t.Fatalf("lost short write: %v", err)
 			}
@@ -150,7 +156,11 @@ func TestArchiveWriterFailures(t *testing.T) {
 			}
 
 			err = writer.WriteHeader(Header{Name: "file", Mode: 0o644, Modified: time.Unix(1, 0)})
-			err = errors.Join(err, writer.Close())
+			if err != nil {
+				t.Fatal(writer.Abort(err))
+			}
+
+			err = writer.Close()
 
 			cancel()
 
@@ -275,11 +285,19 @@ func TestISOStagingFailures(t *testing.T) {
 
 	t.Setenv(variable, directory)
 
-	aborts := []bool{false, true}
+	wanted := errors.New("destination failed")
+	failures := []string{"cancel", "abort", "error", "short write"}
 
-	for _, abort := range aborts {
+	for _, failure := range failures {
 		ctx, cancel := context.WithCancel(t.Context())
 		target := archiveFailureWriter{cancel: cancel}
+
+		switch failure {
+		case "error":
+			target = archiveFailureWriter{err: wanted}
+		case "short write":
+			target = archiveFailureWriter{}
+		}
 
 		writer, err = NewArchiveWriter(ctx, target, "iso")
 		if err != nil {
@@ -295,7 +313,7 @@ func TestISOStagingFailures(t *testing.T) {
 			t.Fatal(writer.Abort(err))
 		}
 
-		if abort {
+		if failure == "abort" {
 			err = writer.Abort(context.Canceled)
 		} else {
 			err = writer.Close()
@@ -303,8 +321,17 @@ func TestISOStagingFailures(t *testing.T) {
 
 		cancel()
 
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancellation during image output: %v", err)
+		expected := context.Canceled
+
+		switch failure {
+		case "error":
+			expected = wanted
+		case "short write":
+			expected = io.ErrShortWrite
+		}
+
+		if !errors.Is(err, expected) {
+			t.Fatalf("%s during image output: %v", failure, err)
 		}
 
 		entries, err := os.ReadDir(directory)

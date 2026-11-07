@@ -140,10 +140,7 @@ func TestReferenceLegacyCreation(t *testing.T) {
 
 			for _, tool := range tools {
 				t.Run(tool, func(t *testing.T) {
-					_, err := exec.LookPath(tool)
-					if err != nil && tool != "bsdtar" {
-						t.Skipf("optional reference tool: %v", err)
-					}
+					requireLegacyReferenceTool(t, tool)
 
 					output := t.TempDir()
 					command := exec.CommandContext(t.Context(), tool, "-xpf", archive)
@@ -221,10 +218,7 @@ func TestReferenceLegacyCreation(t *testing.T) {
 
 			for _, tool := range tools {
 				t.Run("joliet-"+tool, func(t *testing.T) {
-					_, err := exec.LookPath(tool)
-					if err != nil && tool != "bsdtar" {
-						t.Skipf("optional reference tool: %v", err)
-					}
+					requireLegacyReferenceTool(t, tool)
 
 					output := t.TempDir()
 					command := exec.CommandContext(t.Context(), tool, "--options=iso9660:!rockridge", "-xf", archive, "-C", output)
@@ -295,6 +289,22 @@ func TestReferenceLegacyCreation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func requireLegacyReferenceTool(t *testing.T, tool string) {
+	t.Helper()
+
+	_, err := exec.LookPath(tool)
+	if err == nil {
+		return
+	}
+
+	optional := tool == "bsdcpio" || tool == "llvm-ar"
+	if tool == "bsdtar" || (os.Getenv("CI") == "true" && !optional) {
+		t.Fatalf("required reference tool: %v", err)
+	}
+
+	t.Skipf("optional reference tool: %v", err)
 }
 
 func assertLegacyReferenceMetadata(t *testing.T, source, destination string) {
