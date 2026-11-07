@@ -111,7 +111,9 @@ func (archive *Archive) WriteHeader(header Header) error {
 	name := C.CString(header.Name)
 	defer C.free(unsafe.Pointer(name))
 
-	C.archive_entry_set_pathname_utf8(entry, name)
+	// The C locale is UTF-8. Supplying its representation directly avoids
+	// libarchive normalizing UTF-8 names while converting them to that locale.
+	C.archive_entry_set_pathname(entry, name)
 	C.archive_entry_set_size(entry, C.la_int64_t(header.Size))
 	C.archive_entry_set_perm(entry, C.pakr_mode_t(header.Mode&0o777))
 	C.archive_entry_set_mtime(entry, C.time_t(header.Modified.Unix()), C.long(header.Modified.Nanosecond()))
@@ -134,7 +136,7 @@ func (archive *Archive) WriteHeader(header Header) error {
 		defer C.free(unsafe.Pointer(link))
 
 		C.archive_entry_set_filetype(entry, C.AE_IFLNK)
-		C.archive_entry_set_symlink_utf8(entry, link)
+		C.archive_entry_set_symlink(entry, link)
 		C.archive_entry_set_size(entry, 0)
 	default:
 		return errors.New("unsupported archive entry type")

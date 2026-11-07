@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 type archiveHeaderCase struct {
@@ -33,6 +34,55 @@ func (writer archiveFailureWriter) Write(data []byte) (int, error) {
 	}
 
 	return 0, writer.err
+}
+
+func TestArchiveWriterUnicodeNames(t *testing.T) {
+	formats := []string{"cpio", "ar", "iso"}
+	names := []string{"unicode-\u00e9-\u6f22\u5b57", "unicode-e\u0301-\u6f22\u5b57"}
+
+	for _, format := range formats {
+		for _, name := range names {
+			t.Run(format+"/"+name, func(t *testing.T) {
+				var encoded bytes.Buffer
+
+				writer, err := NewArchiveWriter(t.Context(), &encoded, format)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				t.Cleanup(func() {
+					_ = writer.Close()
+				})
+
+				err = writer.WriteHeader(Header{Name: name, Mode: 0o640, Modified: time.Unix(1, 0)})
+				if err == nil {
+					err = writer.Close()
+				}
+
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// Inspect stored names directly: libarchive readers can normalize
+				// them too, and there is no file payload to match accidentally.
+				if !bytes.Contains(encoded.Bytes(), []byte(name)) {
+					t.Fatalf("archive changed UTF-8 name %q", name)
+				}
+
+				if format == "iso" {
+					joliet := make([]byte, 0, len(name)*2)
+
+					for _, unit := range utf16.Encode([]rune(name)) {
+						joliet = append(joliet, byte(unit>>8), byte(unit))
+					}
+
+					if !bytes.Contains(encoded.Bytes(), joliet) {
+						t.Fatalf("archive changed Joliet name %q", name)
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestArchiveWriterLimits(t *testing.T) {

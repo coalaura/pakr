@@ -5,6 +5,7 @@ package pak
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/json"
 	"io"
 	"math/rand/v2"
 	"os"
@@ -18,6 +19,15 @@ import (
 
 	"github.com/coalaura/pakr/internal/interop"
 )
+
+type legacyReferenceFile struct {
+	Name     string
+	Payload  string
+	Mode     os.FileMode
+	Modified time.Time
+	UID      int
+	GID      int
+}
 
 func TestReferenceLegacyStreams(t *testing.T) {
 	payloads := [][]byte{nil, []byte("x"), legacyFixture(t, "payload.cpio"), make([]byte, 300000)}
@@ -134,9 +144,16 @@ func TestReferenceLegacyCreation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+			}
 
-				if name == "ar" {
-					inputs = append(inputs, filename)
+			files := legacyReferenceFiles(t, parent)
+			if len(files) != len(names) {
+				t.Fatalf("unexpected source entries: %d", len(files))
+			}
+
+			if name == "ar" {
+				for _, file := range files {
+					inputs = append(inputs, filepath.Join(parent, file.Name))
 				}
 			}
 
@@ -163,6 +180,8 @@ func TestReferenceLegacyCreation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			files = exchangeLegacyReferenceFiles(t, files)
 
 			produced, verify := interop.Output(t, "archive", encoded)
 			if !verify {
@@ -236,15 +255,17 @@ func TestReferenceLegacyCreation(t *testing.T) {
 						}
 					}
 
-					for _, member := range names {
-						payload := []byte(member)
+					for _, file := range files {
+						assertArchiveFile(t, root, file.Name, []byte(file.Payload))
 
-						if member == "empty" {
-							payload = nil
+						if tool == "ar" || tool == "llvm-ar" {
+							// ar restores mode and time, but creates files owned by the
+							// extractor. bsdtar above checks the archived ownership.
+							file.UID = os.Geteuid()
+							file.GID = os.Getegid()
 						}
 
-						assertArchiveFile(t, root, member, payload)
-						assertLegacyReferenceMetadata(t, filepath.Join(parent, member), filepath.Join(root, member))
+						assertLegacyReferenceMetadata(t, file, filepath.Join(root, file.Name))
 					}
 
 					entries, err := os.ReadDir(root)
@@ -287,10 +308,10 @@ func TestReferenceLegacyCreation(t *testing.T) {
 						t.Fatalf("Joliet entries: %v, %v", entries, err)
 					}
 
-					remaining := make(map[string]bool, len(names))
+					remaining := make(map[string]string, len(files))
 
-					for _, member := range names {
-						remaining[member] = true
+					for _, file := range files {
+						remaining[file.Payload] = file.Name
 					}
 
 					for _, entry := range entries {
@@ -315,16 +336,13 @@ func TestReferenceLegacyCreation(t *testing.T) {
 
 						original := string(payload)
 
-						if len(payload) == 0 {
-							original = "empty"
-						}
-
-						if !remaining[original] || len([]rune(entry.Name())) > 64 {
+						expected, exists := remaining[original]
+						if !exists || len([]rune(entry.Name())) > 64 {
 							t.Fatalf("lost, duplicated or invalid Joliet member: %s (%q)", entry.Name(), payload)
 						}
 
-						if len([]rune(original)) <= 64 && entry.Name() != original {
-							t.Fatalf("changed representable Joliet name: %s -> %s", original, entry.Name())
+						if len([]rune(expected)) <= 64 && entry.Name() != expected {
+							t.Fatalf("changed representable Joliet name: %s -> %s", expected, entry.Name())
 						}
 
 						delete(remaining, original)
@@ -355,20 +373,82 @@ func requireLegacyReferenceTool(t *testing.T, tool string) {
 	t.Skipf("optional reference tool: %v", err)
 }
 
-func assertLegacyReferenceMetadata(t *testing.T, source, destination string) {
+func legacyReferenceFiles(t *testing.T, directory string) []legacyReferenceFile {
 	t.Helper()
 
-	original, err := os.Stat(source)
+	entries, err := os.ReadDir(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	files := make([]legacyReferenceFile, 0, len(entries))
+
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		payload, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		files = append(files, legacyReferenceFile{
+			Name:     entry.Name(),
+			Payload:  string(payload),
+			Mode:     info.Mode(),
+			Modified: info.ModTime(),
+			UID:      header.Uid,
+			GID:      header.Gid,
+		})
+	}
+
+	return files
+}
+
+func exchangeLegacyReferenceFiles(t *testing.T, files []legacyReferenceFile) []legacyReferenceFile {
+	t.Helper()
+
+	// The verifier runs on a different host. Capture expectations from the
+	// producer's filesystem, independently of the archive being tested.
+	encoded, err := json.Marshal(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	produced, verify := interop.Output(t, "metadata.json", encoded)
+	if !verify {
+		return nil
+	}
+
+	var expected []legacyReferenceFile
+
+	err = json.Unmarshal(produced, &expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(expected) != len(files) {
+		t.Fatalf("unexpected source manifest entries: got %d, want %d", len(expected), len(files))
+	}
+
+	return expected
+}
+
+func assertLegacyReferenceMetadata(t *testing.T, expected legacyReferenceFile, destination string) {
+	t.Helper()
 
 	extracted, err := os.Stat(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	originalStat, err := tar.FileInfoHeader(original, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +458,7 @@ func assertLegacyReferenceMetadata(t *testing.T, source, destination string) {
 		t.Fatal(err)
 	}
 
-	if original.Mode() != extracted.Mode() || !original.ModTime().Equal(extracted.ModTime()) || originalStat.Uid != extractedStat.Uid || originalStat.Gid != extractedStat.Gid {
-		t.Fatalf("metadata changed for %s: mode %v, mtime %v, uid/gid %d/%d", destination, extracted.Mode(), extracted.ModTime(), extractedStat.Uid, extractedStat.Gid)
+	if expected.Mode != extracted.Mode() || !expected.Modified.Equal(extracted.ModTime()) || expected.UID != extractedStat.Uid || expected.GID != extractedStat.Gid {
+		t.Fatalf("metadata changed for %s: got mode %v, mtime %v, uid/gid %d/%d; want mode %v, mtime %v, uid/gid %d/%d", destination, extracted.Mode(), extracted.ModTime(), extractedStat.Uid, extractedStat.Gid, expected.Mode, expected.Modified, expected.UID, expected.GID)
 	}
 }
