@@ -53,6 +53,7 @@ func TestArchiveWriterLimits(t *testing.T) {
 		{"iso component", "iso", valid},
 		{"invalid utf8", "cpio", valid},
 		{"iso non-BMP", "iso", valid},
+		{"ar extended size", "ar", valid},
 	}
 
 	cases[0].header.Size = math.MaxUint32 + 1
@@ -69,6 +70,8 @@ func TestArchiveWriterLimits(t *testing.T) {
 	cases[11].header.Name = strings.Repeat("a", 256)
 	cases[12].header.Name = "\xff"
 	cases[13].header.Name = "\U0001f600"
+	cases[14].header.Name = "1234567890123456"
+	cases[14].header.Size = 9999999984
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -138,6 +141,22 @@ func TestArchiveWriterFailures(t *testing.T) {
 			if !errors.Is(err, io.ErrShortWrite) {
 				t.Fatalf("lost short write: %v", err)
 			}
+
+			ctx, cancel = context.WithCancel(t.Context())
+
+			writer, err = NewArchiveWriter(ctx, archiveFailureWriter{cancel: cancel}, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = writer.WriteHeader(Header{Name: "file", Mode: 0o644, Modified: time.Unix(1, 0)})
+			err = errors.Join(err, writer.Close())
+
+			cancel()
+
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("lost cancellation during final write: %v", err)
+			}
 		})
 	}
 }
@@ -200,15 +219,42 @@ func TestLZMAWriterResources(t *testing.T) {
 	if !errors.Is(err, wanted) {
 		t.Fatalf("lost close error: %v", err)
 	}
+
+	writer, err = NewLZMAWriter(t.Context(), archiveFailureWriter{}, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = writer.Close()
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("lost short write: %v", err)
+	}
+
+	ctx, cancel = context.WithCancel(t.Context())
+
+	writer, err = NewLZMAWriter(ctx, archiveFailureWriter{cancel: cancel}, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = writer.Close()
+
+	cancel()
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost cancellation during final write: %v", err)
+	}
 }
 
 func TestISOStagingFailures(t *testing.T) {
+	variable := "TMPDIR"
+
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix TMPDIR staging behavior")
+		variable = "TMP"
 	}
 
 	directory := t.TempDir()
-	t.Setenv("TMPDIR", filepath.Join(directory, "missing"))
+	t.Setenv(variable, filepath.Join(directory, "missing"))
 
 	writer, err := NewArchiveWriter(t.Context(), io.Discard, "iso")
 	if err != nil {
@@ -227,7 +273,7 @@ func TestISOStagingFailures(t *testing.T) {
 		t.Fatal("staging failure not propagated")
 	}
 
-	t.Setenv("TMPDIR", directory)
+	t.Setenv(variable, directory)
 
 	aborts := []bool{false, true}
 

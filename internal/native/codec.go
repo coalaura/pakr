@@ -215,6 +215,10 @@ func (writer *Writer) flush(size int) error {
 		return io.ErrShortWrite
 	}
 
+	if err == nil && writer.ctx != nil {
+		err = context.Cause(writer.ctx)
+	}
+
 	return err
 }
 

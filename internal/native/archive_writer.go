@@ -113,6 +113,10 @@ func pakrArchiveWrite(handle C.uintptr_t, data unsafe.Pointer, size C.size_t) C.
 		err = io.ErrShortWrite
 	}
 
+	if err == nil {
+		err = context.Cause(archive.ctx)
+	}
+
 	archive.err = err
 
 	if err != nil {
@@ -153,7 +157,7 @@ func validateArchiveHeader(header Header, format string) error {
 
 		extended := int64(0)
 
-		if len(header.Name) > 16 || strings.Contains(header.Name, " ") {
+		if len(header.Name) >= 16 || strings.Contains(header.Name, " ") {
 			extended = int64(len(header.Name))
 		}
 
