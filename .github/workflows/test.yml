@@ -34,6 +34,7 @@ jobs:
             --env BUILD_IMAGE --env JOBS=2 --env CI=true --env GOEXPERIMENT=cgocheck2 \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint sh "$BUILD_IMAGE" -ec '
+              mkdir -p .native dist
               trap '\''chown -R "$HOST_UID:$HOST_GID" .native dist'\'' EXIT
               apk add --no-cache build-base cmake coreutils curl patch tar xz gzip zstd bzip2 lzip lz4 brotli libarchive-tools cpio xorriso binutils
               for tool in cpio xorriso gzip uncompress xz bsdtar ar; do
@@ -111,6 +112,7 @@ jobs:
             --env PAKR_TARGET_OS --env BUILD_IMAGE --env JOBS=2 --env GOEXPERIMENT=cgocheck2 \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint bash "$BUILD_IMAGE" -ec '
+              mkdir -p .native dist
               trap '\''chown -R "$HOST_UID:$HOST_GID" .native dist'\'' EXIT
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" amd64
@@ -118,7 +120,7 @@ jobs:
               suffix=
               if [ "$PAKR_TARGET_OS" = windows ]; then suffix=.exe; fi
               module=$(go list -m)
-              packages=$(go list -tags=integration -f '\''{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}'\'' ./...)
+              packages=$(go list "${GO_BUILD_FLAGS[@]}" -tags=integration -f '\''{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}'\'' ./...)
               for package in $packages; do
                 directory="dist/tests${package#"$module"}"
                 mkdir -p "$directory"
