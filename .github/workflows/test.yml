@@ -174,7 +174,7 @@ jobs:
         id: test-volume
         if: matrix.os == 'darwin'
         run: |
-          hdiutil create -size 4g -type SPARSE -fs APFSX -volname pakr-tests "$RUNNER_TEMP/pakr-tests.sparseimage"
+          hdiutil create -size 4g -type SPARSE -fs APFS -fsargs "-e" -volname pakr-tests "$RUNNER_TEMP/pakr-tests.sparseimage"
           hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/pakr-tests" "$RUNNER_TEMP/pakr-tests.sparseimage"
           mkdir "$RUNNER_TEMP/pakr-tests/tmp"
           printf 'TMPDIR=%s\n' "$RUNNER_TEMP/pakr-tests/tmp" >> "$GITHUB_ENV"
