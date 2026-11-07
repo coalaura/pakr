@@ -91,16 +91,7 @@ func (extract *extractor) file(name string, header native.Header, source io.Read
 		return err
 	}
 
-	if header.Size >= 0 && header.Size < math.MaxInt64 {
-		source = io.LimitReader(source, header.Size+1)
-	}
-
-	writer := extractionWriter{target: file, budget: extract.budget, declared: header.Size}
-
-	count, err := extract.copying.copy(&writer, source)
-	if err == nil && header.Size >= 0 && count != header.Size {
-		err = fmt.Errorf("size mismatch: expected %d bytes, got %d", header.Size, count)
-	}
+	err = extract.payload(header, file, source)
 
 	if err == nil {
 		err = applyMetadata(file, header)
@@ -112,6 +103,25 @@ func (extract *extractor) file(name string, header native.Header, source io.Read
 	}
 
 	return nil
+}
+
+func (extract *extractor) payload(header native.Header, target io.Writer, source io.Reader) error {
+	if header.Size < -1 {
+		return fmt.Errorf("invalid entry size: %d", header.Size)
+	}
+
+	if header.Size >= 0 && header.Size < math.MaxInt64 {
+		source = io.LimitReader(source, header.Size+1)
+	}
+
+	writer := extractionWriter{target: target, budget: extract.budget, declared: header.Size}
+
+	count, err := extract.copying.copy(&writer, source)
+	if err == nil && header.Size >= 0 && count != header.Size {
+		err = fmt.Errorf("size mismatch: expected %d bytes, got %d", header.Size, count)
+	}
+
+	return err
 }
 
 func (extract *extractor) finish() error {

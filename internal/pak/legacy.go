@@ -16,7 +16,7 @@ type cpioLinkGroup struct {
 
 type cpioLinks map[string]*cpioLinkGroup
 
-func (links *cpioLinks) entry(header native.Header, archive *native.Archive, extract *extractor) error {
+func (links *cpioLinks) entry(header native.Header, archive io.Reader, extract *extractor) error {
 	_, err := cleanName(header.Name)
 	if err != nil {
 		return err
@@ -65,9 +65,14 @@ func (links *cpioLinks) entry(header native.Header, archive *native.Archive, ext
 	}
 
 	if header.Size == 0 {
+		err = drainCPIOEntry(header, archive, extract)
+		if err != nil {
+			return err
+		}
+
 		group.pending = append(group.pending, header)
 
-		return drainCPIOEntry(header, archive, extract)
+		return nil
 	}
 
 	// Newc commonly stores the payload in the last member of a hardlink group.
@@ -201,9 +206,12 @@ func finishCPIO(archive *native.Archive, links *cpioLinks, extract *extractor) e
 	return nil
 }
 
-func drainCPIOEntry(header native.Header, archive *native.Archive, extract *extractor) error {
-	writer := extractionWriter{target: io.Discard, budget: extract.budget, declared: header.Size}
+func drainCPIOEntry(header native.Header, archive io.Reader, extract *extractor) error {
+	if header.Kind == native.Symlink {
+		// libarchive already consumed and validated the link payload in Next.
+		// Its declared bytes were reserved when the header arrived.
+		header.Size = 0
+	}
 
-	_, err := extract.copying.copy(&writer, archive)
-	return err
+	return extract.payload(header, io.Discard, archive)
 }

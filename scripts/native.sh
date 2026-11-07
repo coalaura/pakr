@@ -16,7 +16,7 @@ toolchain="$build/toolchain"
 mkdir -p "$prefix/include" "$prefix/lib" "$build"
 bash "$root/scripts/fetch.sh"
 
-signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/patches/"*.patch "$root/scripts/bzip2/CMakeLists.txt" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
+signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/fetch.sh" "$root/scripts/patches/"*.patch "$root/scripts/bzip2/CMakeLists.txt" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
 signature=$(printf '%s' "$signature" | sha256sum | cut -d ' ' -f 1)
 (cd "$root/tools/toolchain" && go run -buildvcs=false . "$target" "$arch" "$toolchain")
 

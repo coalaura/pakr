@@ -379,30 +379,12 @@ func probeCPIOStream(input *bufio.Reader, format Format) (io.Reader, Format, err
 
 	var recorded bytes.Buffer
 
-	decoder, err := native.NewReader(io.TeeReader(input, &recorded), format.Codec, 1)
-	if err != nil {
-		return nil, Format{}, err
-	}
-
-	var header [6]byte
-
-	count, readErr := io.ReadFull(decoder, header[:])
-
-	closeErr := decoder.Close()
-
+	// Limit before recording: decoder read-ahead must also fit in the replay buffer.
+	limited := io.LimitReader(input, cpioProbeInputLimit)
+	format, err := probeCPIO(io.TeeReader(limited, &recorded), format)
 	source := io.MultiReader(bytes.NewReader(recorded.Bytes()), input)
 
-	inner, _ := detectHeader(header[:count])
-	if inner.Container == "cpio" {
-		inner, err = ParseFormat("cpio." + format.Name)
-		return source, inner, err
-	}
-
-	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-		return nil, Format{}, errors.Join(readErr, closeErr)
-	}
-
-	return source, format, closeErr
+	return source, format, err
 }
 
 func detectFormat(file *os.File) (Format, error) {
@@ -429,23 +411,7 @@ func detectFormat(file *os.File) (Format, error) {
 
 	switch format.Codec {
 	case native.Gzip, native.Bzip2, native.XZ, native.Zstd:
-		reader, openErr := native.NewReader(io.NewSectionReader(file, 0, 1<<63-1), format.Codec, 1)
-		if openErr != nil {
-			return Format{}, openErr
-		}
-
-		defer reader.Close()
-
-		count, readErr := io.ReadFull(reader, header[:6])
-
-		inner, _ := detectHeader(header[:count])
-		if inner.Container == "cpio" {
-			return ParseFormat("cpio." + format.Name)
-		}
-
-		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-			return Format{}, readErr
-		}
+		return probeCPIO(io.NewSectionReader(file, 0, cpioProbeInputLimit), format)
 	}
 
 	return format, nil
@@ -461,7 +427,7 @@ func detectHeader(data []byte) (Format, error) {
 		name = "ar"
 	case bytes.HasPrefix(data, []byte{0xed, 0xab, 0xee, 0xdb}):
 		name = "rpm"
-	case bytes.HasPrefix(data, []byte("070701")), bytes.HasPrefix(data, []byte("070702")), bytes.HasPrefix(data, []byte("070707")), bytes.HasPrefix(data, []byte{0xc7, 0x71}), bytes.HasPrefix(data, []byte{0x71, 0xc7}):
+	case validCPIOHeader(data):
 		name = "cpio"
 	case bytes.HasPrefix(data, []byte{0x1f, 0x9d}):
 		name = "Z"
