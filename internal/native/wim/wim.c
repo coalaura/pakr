@@ -111,12 +111,9 @@ static int tree_entry(const struct wimlib_dir_entry *entry, void *opaque)
 		if (stream->stream_type == STREAM_TYPE_REPARSE_POINT && !(entry->attributes & 0x400)) return unsupported_entry(context, entry, "reparse stream on ordinary file");
 	}
 	if (inode_get_tagged_item(inode, TAG_XATTRS, 0, NULL) || inode_get_tagged_item(inode, TAG_WIMLIB_LINUX_XATTRS, 0, NULL)) return unsupported_entry(context, entry, "extended attributes");
-	if (entry->security_descriptor_size) return unsupported_entry(context, entry, "security descriptor");
 	if (entry->num_named_streams) return unsupported_entry(context, entry, "alternate data stream");
-	/* DOS aliases carry no separate contents; only the long name is published. */
-	for (size_t index = 0; index < sizeof(entry->object_id); index++) {
-		if (((const unsigned char *)&entry->object_id)[index]) return unsupported_entry(context, entry, "object ID");
-	}
+	/* Security descriptors, object IDs and DOS aliases carry no separate contents.
+	 * Like other file archives, extraction restores neither ACLs nor ownership. */
 	char *path = utf8_string(entry->full_path);
 	char *name = utf8_string(entry->filename);
 	if (!path || !name) {

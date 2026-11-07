@@ -67,8 +67,9 @@ func wimHeader(item native.WIMEntry) (native.Header, error) {
 	header := native.Header{Name: name, Mode: item.Mode & 0o777, Modified: item.Modified}
 
 	// File archives support regular data, directory and relative symlink entries.
-	// Deployment attributes, encrypted files, devices and unknown reparse tags fail.
-	if item.Attributes & ^uint32(0x1|0x10|0x20|0x80|0x200|0x400|0x800|0x2000) != 0 || item.Size > math.MaxInt64 {
+	// Hidden, system, temporary and storage hints carry no separate contents.
+	// Offline, encrypted, device and unknown attributes still fail closed.
+	if item.Attributes & ^uint32(0x1|0x2|0x4|0x10|0x20|0x80|0x100|0x200|0x400|0x800|0x2000) != 0 || item.Size > math.MaxInt64 {
 		return header, fmt.Errorf("unsupported WIM attributes or size: %s", name)
 	}
 

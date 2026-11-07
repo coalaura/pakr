@@ -1,22 +1,51 @@
 --- a/src/rapidgzip/gzip/deflate.hpp
 +++ b/src/rapidgzip/gzip/deflate.hpp
-@@ -1785,7 +1785,9 @@
+@@ -1783,9 +1783,39 @@
++/* One fixed-size slot per thread, never on the worker stack. Destroying the decoder
++ * after each use releases its variable-size backreference buffer. Analysis releases
++ * the slot before verification. Nested calls get independent, non-retained storage. */
++class SparseWindowBlock
++{
++    using Decoder = Block</* ENABLE_STATISTICS */ false>;
++    inline static thread_local std::optional<Decoder> storage;
++    std::unique_ptr<Decoder> nested;
++
++public:
++    SparseWindowBlock() :
++        nested( storage.has_value() ? std::make_unique<Decoder>() : nullptr ),
++        block( nested ? *nested : storage.emplace() )
++    {}
++
++    ~SparseWindowBlock()
++    {
++        if ( !nested ) {
++            storage.reset();
++        }
++    }
++
++    SparseWindowBlock( const SparseWindowBlock& ) = delete;
++    SparseWindowBlock& operator=( const SparseWindowBlock& ) = delete;
++
++    Decoder& block;
++};
++
++
+ [[nodiscard]] inline bool
+ verifySparseWindow( BitReader&                bitReader,
                      const std::vector<bool>&  windowByteIsRequired,
                      const VectorView<uint8_t> expectedOutput )
  {
 -    Block</* ENABLE_STATISTICS */ false> block;
-+    /* This decoder is nested beneath ISA-L and sparse-window analysis on small worker stacks. */
-+    auto blockStorage = std::make_unique<Block</* ENABLE_STATISTICS */ false> >();
-+    auto& block = *blockStorage;
++    SparseWindowBlock scratch;
++    auto& block = scratch.block;
  
      /* Check that the created sparse window is correct by setting all sparse bytes to some arbitrary canary token.
       * If not (should not happen), show a warning and fall back to a non-sparse window. */
-@@ -1856,37 +1858,9 @@
+@@ -1856,37 +1886,8 @@
 -    /* Anonymous namespace to ensure that the 208kB deflate::Block is cleared from the stack before
 -     * allocating another such block inside verifySparseWindow! */
-+    /* Release the decoder before allocating the verification decoder. A lexical scope does not
-+     * release stack space: both large frames otherwise coexist with the caller's ISA-L decoder
-+     * and overflow macOS worker stacks. Heap ownership trades an allocation for bounded stack use. */
++    /* Release the thread-local slot before verification; lexical scopes alone do not
++     * prevent both large stack frames from coexisting with the caller's ISA-L decoder. */
      {
 -        /* Size of deflate::Block is 207616. Allocation on stack did result in a SIGBUS
 -         * because of a stack overflow on MacOS:
@@ -49,8 +78,8 @@
 -         * -fsanitize=address, and even when using valgrind --tool=massif! Utter fucking garbage!
 -         */
 -        Block</* ENABLE_STATISTICS */ false> block;
-+        auto blockStorage = std::make_unique<Block</* ENABLE_STATISTICS */ false> >();
-+        auto& block = *blockStorage;
++        SparseWindowBlock scratch;
++        auto& block = scratch.block;
          block.setTrackBackreferences( true );
  
          if constexpr ( CHECK_CORRECTNESS ) {

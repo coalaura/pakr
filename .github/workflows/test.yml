@@ -119,10 +119,6 @@ jobs:
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" amd64
               source ".native/build/$PAKR_TARGET_OS-amd64/toolchain/env.sh"
-              if [ "$PAKR_TARGET_OS" = darwin ]; then
-                # Keep native function symbols; retain -w to avoid cross-host dsymutil.
-                GO_LDFLAGS="${GO_LDFLAGS//-s -w/-w}"
-              fi
               suffix=
               if [ "$PAKR_TARGET_OS" = windows ]; then suffix=.exe; fi
               module=$(go list -m)
@@ -185,18 +181,12 @@ jobs:
           mkdir "$RUNNER_TEMP/pakr-tests/tmp"
           printf 'TMPDIR=%s\n' "$RUNNER_TEMP/pakr-tests/tmp" >> "$GITHUB_ENV"
 
-      - name: Diagnose macOS parallel gzip
+      - name: Check macOS parallel gzip
         if: matrix.os == 'darwin'
         timeout-minutes: 3
-        run: python3 scripts/test-macos-parallel.py
-
-      - name: Upload macOS parallel gzip diagnostics
-        if: always() && matrix.os == 'darwin'
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-parallel-diagnostics
-          path: dist/macos-parallel-diagnostics/
-          if-no-files-found: warn
+        run: |
+          chmod +x dist/tests/internal/native/package.test
+          dist/tests/internal/native/package.test -test.v -test.run '^TestParallel' -test.count=1 -test.timeout=2m
 
       - name: Run all test packages
         shell: bash
