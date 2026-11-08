@@ -18,6 +18,7 @@ package native
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libarchive.a
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libzstd.a
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/liblzma.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libfast-lzma2.a
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbz2.a
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbzip3.a
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../.native/darwin-amd64/lib/libbsc.a
@@ -34,6 +35,7 @@ package native
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libarchive.a
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libzstd.a
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/liblzma.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libfast-lzma2.a
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbz2.a
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbzip3.a
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libbsc.a
@@ -46,7 +48,7 @@ package native
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../.native/darwin-arm64/lib/libz.a
 
 #cgo CPPFLAGS: -DLIBARCHIVE_STATIC
-#cgo linux windows LDFLAGS: -lpakr_parallel -lpakr_kanzi -lkanzi -larchive -lzstd -llzma -lbz2 -lbzip3 -lbsc -llz4 -lbrotlienc -lbrotlidec -lbrotlicommon -ldeflate -lisal -lz
+#cgo linux windows LDFLAGS: -lpakr_parallel -lpakr_kanzi -lkanzi -larchive -lzstd -llzma -lfast-lzma2 -lbz2 -lbzip3 -lbsc -llz4 -lbrotlienc -lbrotlidec -lbrotlicommon -ldeflate -lisal -lz
 #cgo LDFLAGS: -lm -lstdc++
 #cgo linux LDFLAGS: -lpthread
 #cgo windows LDFLAGS: -lbcrypt
@@ -146,7 +148,7 @@ func (writer *Writer) Write(data []byte) (int, error) {
 			return written, err
 		}
 
-		if consumed == 0 && produced == 0 {
+		if consumed == 0 && produced == 0 && C.pakr_codec_pending(writer.codec) == 0 {
 			writer.err = io.ErrNoProgress
 
 			return written, writer.err
@@ -329,6 +331,10 @@ func NewWriter(target io.Writer, format, level, threads int) (*Writer, error) {
 }
 
 func NewWriterExtreme(target io.Writer, format, level, threads int, extreme bool) (*Writer, error) {
+	if format == XZ {
+		return NewXZWriter(context.Background(), target, level, threads, extreme, 0)
+	}
+
 	if format == Lzip && threads > 0 {
 		return NewLzipWriter(context.Background(), target, level, 0, -1)
 	}

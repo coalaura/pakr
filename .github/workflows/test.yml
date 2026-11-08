@@ -79,7 +79,7 @@ jobs:
               cp "$BSC_CLI" dist/reference-tools/bsc
               export PAKR_INTEROP_MODE=prepare
               export PAKR_INTEROP_REFERENCES="$PWD/dist/references"
-              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v -run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI|WIMImagex)"
+              bash scripts/build.sh linux amd64 test -tags=integration -count=1 -v -run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI|XZCLI|WIMImagex)"
             '
 
       - name: Save updated native libraries
@@ -329,6 +329,6 @@ jobs:
               export PAKR_INTEROP_OUTPUTS="$PWD/dist/produced"
               root=$PWD
               for package in internal/native internal/pak; do
-                (cd "$package" && "$root/dist/tests/$package/package.test" -test.v -test.count=1 -test.timeout=10m -test.run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI)")
+                (cd "$package" && "$root/dist/tests/$package/package.test" -test.v -test.count=1 -test.timeout=10m -test.run "Test(Reference|BSCCLI|Bzip3CLI|LzipCLI|XZCLI)")
               done
             '

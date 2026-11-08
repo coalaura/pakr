@@ -13,6 +13,8 @@ Native source versions, URLs and checksums are recorded in `scripts/native.lock`
 | libbsc 3.4.0 | `libbsc/LICENSE` (Apache-2.0); authorship and additional credits in `libbsc/AUTHORS` |
 | Kanzi C++ 2.6.0 | `kanzi/LICENSE` (Apache-2.0); copyright Frederic Langlet |
 | liblzma | `xz/COPYING` and `xz/COPYING.0BSD` |
+| Fast LZMA2 1.0.1 | `fast-lzma2/LICENSE` (BSD-2-Clause option selected; copyright Conor McCarthy) |
+| xxHash (included in Fast LZMA2) | `fast-lzma2/xxhash.h` (BSD-2-Clause; copyright Yann Collet) |
 | liblz4 | `lz4/lib/LICENSE` (BSD-2-Clause) |
 | Brotli | `brotli/LICENSE` (MIT) |
 | libarchive | `libarchive/COPYING`; individual source notices also apply |

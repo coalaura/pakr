@@ -93,7 +93,7 @@ func flags(packing bool) []cli.Flag {
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: outputUsage},
 		&cli.StringFlag{Name: "format", Aliases: []string{"f"}, Usage: formatUsage + "; see --formats"},
 		&cli.StringFlag{Name: "threads", Aliases: []string{"t"}, Value: "auto", Usage: "worker count: auto (Go concurrency), all (logical CPUs), or 1-256"},
-		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi, Lzip, WIM/ESD; LZMA-Alone packing): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
+		&cli.StringFlag{Name: "memory", Value: "auto", Usage: "codec allocation estimate (BSC, BZIP3, Kanzi, Lzip, WIM/ESD; XZ and LZMA-Alone packing): auto (1/4 available, up to 8GiB; fallback 256MiB) or a positive size in bytes, KiB, MiB, GiB, TiB; not a process limit"},
 	}
 
 	if packing {

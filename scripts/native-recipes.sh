@@ -34,6 +34,13 @@ recipe_xz() {
 	archives=(liblzma.a)
 }
 
+recipe_fast_lzma2() {
+	cmake_source="$root/scripts/fast-lzma2"
+	inputs=(scripts/fast-lzma2/CMakeLists.txt)
+	cmake_options=(-DSOURCE="$sources/fast-lzma2")
+	archives=(libfast-lzma2.a)
+}
+
 recipe_lz4() {
 	cmake_source="$sources/lz4/build/cmake"
 	cmake_options=(-DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF -DLZ4_STATIC_MULTITHREAD=ON)

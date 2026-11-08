@@ -226,6 +226,18 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 			codec, err = native.NewLZMAWriter(copying.ctx, target, options.Level, options.Memory)
 		} else if options.Seekable {
 			codec, err = native.NewSeekableWriter(target, options.Level, options.Threads)
+		} else if options.Format.Codec == native.XZ {
+			var stream *native.Writer
+
+			stream, err = native.NewXZWriter(copying.ctx, target, options.Level, options.Threads, options.Extreme, options.Memory)
+			if err == nil {
+				codec = stream
+
+				if options.Log != nil {
+					settings := stream.XZSettings()
+					_ = options.Log.Infof("XZ: %s preset %d, %d workers, %d KiB dictionary, %d MiB memory estimate including reserve\n", settings.Backend, settings.Preset, settings.Workers, settings.Dictionary>>10, (settings.Memory+(1<<20)-1)>>20)
+				}
+			}
 		} else if options.Format.Codec == native.Gzip {
 			codec, err = native.NewGzipWriter(target, options.Level, options.Threads)
 		} else if options.Format.Codec == native.Bzip2 && options.Threads > 1 {

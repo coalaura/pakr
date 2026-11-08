@@ -1,6 +1,7 @@
 #include "codec.h"
 #include "levels.h"
 #include "lzip.h"
+#include "xz.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -36,6 +37,8 @@ struct pakr_codec {
 	BrotliEncoderState *brotli_encoder;
 	BrotliDecoderState *brotli_decoder;
 	pakr_lzip *lzip;
+	pakr_xz *xz_encoder;
+	int pending;
 };
 
 static int fail(pakr_codec *codec, const char *message) {
@@ -44,6 +47,7 @@ static int fail(pakr_codec *codec, const char *message) {
 }
 
 pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int extreme) {
+	if (format == 4 && encode) return pakr_codec_new_xz(level, threads, extreme, UINT64_C(2) << 30);
 	pakr_codec *codec = calloc(1, sizeof(*codec));
 	if (!codec) {
 		return NULL;
@@ -89,22 +93,12 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int e
 		codec->initialized = result == BZ_OK;
 		break;
 	case 4: {
-		if (encode) {
-			lzma_mt options = {0};
-			options.threads = threads;
-			options.preset = level | (extreme ? LZMA_PRESET_EXTREME : 0);
-			options.check = LZMA_CHECK_CRC64;
-			while (options.threads > 1 && lzma_stream_encoder_mt_memusage(&options) > (UINT64_C(2) << 30)) --options.threads;
-			codec->threads = options.threads;
-			result = lzma_stream_encoder_mt(&codec->xz, &options);
-		} else {
-			lzma_mt options = {0};
-			options.threads = threads;
-			options.flags = LZMA_CONCATENATED;
-			options.memlimit_threading = UINT64_C(512) << 20;
-			options.memlimit_stop = UINT64_C(2) << 30;
-			result = lzma_stream_decoder_mt(&codec->xz, &options);
-		}
+		lzma_mt options = {0};
+		options.threads = threads;
+		options.flags = LZMA_CONCATENATED;
+		options.memlimit_threading = UINT64_C(512) << 20;
+		options.memlimit_stop = UINT64_C(2) << 30;
+		result = lzma_stream_decoder_mt(&codec->xz, &options);
 		codec->initialized = result == LZMA_OK;
 		break;
 	}
@@ -141,8 +135,30 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int e
 }
 
 const char *pakr_codec_error(pakr_codec *codec) {
+	if (codec->xz_encoder) return pakr_xz_error(codec->xz_encoder);
 	if (codec->lzip) return pakr_lzip_error(codec->lzip);
 	return codec->error;
+}
+
+pakr_codec *pakr_codec_new_xz(int level, int threads, int extreme, uint64_t memory) {
+	pakr_codec *codec = calloc(1, sizeof(*codec));
+	if (!codec) return NULL;
+	codec->format = 4;
+	codec->encode = 1;
+	codec->level = pakr_level(4, level);
+	codec->threads = threads;
+	codec->extreme = extreme;
+	codec->xz_encoder = pakr_xz_new(level, threads, extreme, memory);
+	if (!codec->xz_encoder) fail(codec, "cannot allocate XZ state");
+	return codec;
+}
+
+uint64_t pakr_codec_memory(pakr_codec *codec) {
+	return codec->xz_encoder ? pakr_xz_memory(codec->xz_encoder) : 0;
+}
+
+int pakr_codec_pending(pakr_codec *codec) {
+	return codec->pending;
 }
 
 pakr_codec *pakr_codec_new_lzip(int encode, int level, uint64_t memory, int64_t size) {
@@ -187,6 +203,7 @@ size_t pakr_codec_bound(pakr_codec *codec, size_t input_size) {
 }
 
 int pakr_codec_parameter(pakr_codec *codec, int parameter) {
+	if (codec->xz_encoder && (parameter == 1 || parameter >= 3)) return pakr_xz_parameter(codec->xz_encoder, parameter);
 	if (parameter == 2) return codec->extreme;
 	if (codec->zstd_encoder) {
 		int value = 0;
@@ -198,6 +215,11 @@ int pakr_codec_parameter(pakr_codec *codec, int parameter) {
 }
 
 int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, void *output, size_t *output_size, int finish) {
+	if (codec->xz_encoder) {
+		int status = pakr_xz_step(codec->xz_encoder, input, input_size, output, output_size, finish);
+		codec->pending = status == 2;
+		return status;
+	}
 	if (codec->lzip) return pakr_lzip_step(codec->lzip, input, input_size, output, output_size, finish);
 	size_t available_input = *input_size;
 	size_t available_output = *output_size;
@@ -329,5 +351,6 @@ void pakr_codec_free(pakr_codec *codec) {
 	BrotliEncoderDestroyInstance(codec->brotli_encoder);
 	BrotliDecoderDestroyInstance(codec->brotli_decoder);
 	pakr_lzip_free(codec->lzip);
+	pakr_xz_free(codec->xz_encoder);
 	free(codec);
 }

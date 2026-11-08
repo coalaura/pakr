@@ -129,7 +129,18 @@ func TestNativeParameters(t *testing.T) {
 	formats := []int{Zstd, XZ, LZ4, Brotli, Deflate}
 
 	for _, format := range formats {
-		writer, err := NewWriterExtreme(io.Discard, format, 9, 4, true)
+		var (
+			writer *Writer
+			err    error
+		)
+
+		if format == XZ {
+			// Test requested settings independently of available memory on the runner.
+			writer, err = NewXZWriter(t.Context(), io.Discard, 9, 4, true, 8<<30)
+		} else {
+			writer, err = NewWriterExtreme(io.Discard, format, 9, 4, true)
+		}
+
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,6 +148,10 @@ func TestNativeParameters(t *testing.T) {
 		level, threads, extreme := writer.parameters()
 		if level != NativeLevel(format, 9) || extreme != (format == XZ) {
 			t.Fatalf("codec %d: level=%d threads=%d extreme=%t", format, level, threads, extreme)
+		}
+
+		if format == XZ && threads != 4 {
+			t.Fatalf("xz silently reduced workers: %d", threads)
 		}
 
 		err = writer.Close()

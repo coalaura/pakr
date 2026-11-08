@@ -182,7 +182,7 @@ fingerprint_started=$SECONDS
 common_signature=$(toolchain_signature | digest)
 printf 'Toolchain fingerprint: %s (%ss)\n' "$common_signature" "$((SECONDS - fingerprint_started))"
 declare -A signatures
-components=(zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate)
+components=(zlib-ng zstd bzip2 bzip3 libbsc xz fast-lzma2 lz4 brotli libdeflate)
 if [[ "$arch" == amd64 ]]; then components+=(nasm); fi
 components+=(isal libarchive parallel kanzi wim)
 

@@ -7,7 +7,7 @@ work=$(mktemp -d "$root/.native/native-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/scripts/patches" "$work/.native/downloads" "$work/upstream/include" "$work/bin" "$work/zig-lib" "$work/tools/toolchain" "$work/internal"
 cp "$root/scripts/"native*.sh "$root/scripts/fetch.sh" "$work/scripts/"
-cp -a "$root/scripts/bzip2" "$root/scripts/parallel" "$root/scripts/kanzi" "$root/scripts/wimlib" "$work/scripts/"
+cp -a "$root/scripts/bzip2" "$root/scripts/fast-lzma2" "$root/scripts/parallel" "$root/scripts/kanzi" "$root/scripts/wimlib" "$work/scripts/"
 cp -a "$root/internal/native" "$work/internal/"
 cp "$root/tools/toolchain/"*go* "$work/tools/toolchain/"
 printf 'upstream\n' > "$work/upstream/value"
@@ -82,6 +82,7 @@ if [[ "$1" == --install ]]; then
 		bzip3) archives=(libbzip3.a) ;;
 		libbsc) archives=(libbsc.a) ;;
 		xz) archives=(liblzma.a) ;;
+		fast-lzma2) archives=(libfast-lzma2.a) ;;
 		lz4) archives=(liblz4.a) ;;
 		brotli) archives=(libbrotlienc.a libbrotlidec.a libbrotlicommon.a) ;;
 		libdeflate) archives=(libdeflate.a) ;;
@@ -202,7 +203,7 @@ if fingerprint "$work/missing-sdk" > "$work/build.log" 2>&1; then fail 'missing 
 printf 'verified tree fingerprints: stable, NUL-safe, cycle-safe, external inputs and errors\n'
 
 build
-expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate isal libarchive parallel kanzi wim
+expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz fast-lzma2 lz4 brotli libdeflate isal libarchive parallel kanzi wim
 build
 expect_rebuilt
 printf '// Go-only change\n' >> "$work/internal/native/codec.go"
@@ -223,12 +224,15 @@ expect_rebuilt zlib-ng libarchive parallel
 printf '\n' >> "$work/scripts/bzip2/CMakeLists.txt"
 build
 expect_rebuilt bzip2 libarchive parallel
+printf '\n' >> "$work/scripts/fast-lzma2/CMakeLists.txt"
+build
+expect_rebuilt fast-lzma2
 printf '# toolchain revision\n' >> "$work/bin/zig"
 build
-expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate isal libarchive parallel kanzi wim
+expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz fast-lzma2 lz4 brotli libdeflate isal libarchive parallel kanzi wim
 printf 'changed Zig header\n' >> "$work/zig-lib/System/Library/Frameworks/Ruby.framework/Versions/A/Headers/ruby.h"
 build
-expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate isal libarchive parallel kanzi wim
+expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz fast-lzma2 lz4 brotli libdeflate isal libarchive parallel kanzi wim
 printf 'corrupt\n' >> "$prefix/lib/libzstd.a"
 build
 expect_rebuilt zstd
@@ -262,12 +266,12 @@ printf 'changed SDK header\n' >> "$framework/Versions/A/Headers/ruby.h"
 build
 expect_rebuilt
 bash "$work/scripts/native.sh" darwin amd64 > "$work/build.log" 2>&1 || fail 'mock Darwin SDK invalidation failed'
-expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate nasm isal libarchive parallel kanzi wim
+expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz fast-lzma2 lz4 brotli libdeflate nasm isal libarchive parallel kanzi wim
 bash "$work/scripts/native.sh" darwin amd64 > "$work/build.log" 2>&1 || fail 'mock Darwin SDK reuse failed'
 expect_rebuilt
 ln -sfn ./Versions/Current/Headers "$framework/Headers"
 bash "$work/scripts/native.sh" darwin amd64 > "$work/build.log" 2>&1 || fail 'mock Darwin SDK link invalidation failed'
-expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate nasm isal libarchive parallel kanzi wim
+expect_rebuilt zlib-ng zstd bzip2 bzip3 libbsc xz fast-lzma2 lz4 brotli libdeflate nasm isal libarchive parallel kanzi wim
 bash "$work/scripts/native.sh" darwin amd64 > "$work/build.log" 2>&1 || fail 'mock Darwin SDK link reuse failed'
 expect_rebuilt
 for command in find sha256sum; do

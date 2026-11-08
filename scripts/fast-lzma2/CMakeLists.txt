@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(pakr_fast_lzma2 C)
+add_library(fast-lzma2 STATIC ${SOURCE}/dict_buffer.c ${SOURCE}/fl2_common.c ${SOURCE}/fl2_compress.c ${SOURCE}/fl2_decompress.c ${SOURCE}/fl2_pool.c ${SOURCE}/fl2_threading.c ${SOURCE}/lzma2_dec.c ${SOURCE}/lzma2_enc.c ${SOURCE}/radix_bitpack.c ${SOURCE}/radix_mf.c ${SOURCE}/radix_struct.c ${SOURCE}/range_enc.c ${SOURCE}/util.c ${SOURCE}/xxhash.c)
+target_include_directories(fast-lzma2 PUBLIC ${SOURCE})
+find_package(Threads REQUIRED)
+target_link_libraries(fast-lzma2 PRIVATE Threads::Threads)
+install(TARGETS fast-lzma2 ARCHIVE DESTINATION lib)
+install(FILES ${SOURCE}/fast-lzma2.h DESTINATION include)

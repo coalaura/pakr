@@ -88,7 +88,7 @@ Flags may follow input paths.
 | `-o`, `--output` | Output archive or `-` for stdout when packing; destination directory or `-` for raw Kanzi stdout when unpacking |
 | `-f`, `--format` | Explicit format or alias |
 | `-t`, `--threads` | Worker budget: `auto` (default), `all` or 1-256 |
-| `--memory` | BSC / BZIP3 / Kanzi / Lzip / WIM / ESD allocation budget, also LZMA-Alone packing: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
+| `--memory` | BSC / BZIP3 / Kanzi / Lzip / WIM / ESD allocation budget, also XZ and LZMA-Alone packing: `auto` (default) or a positive byte count / `KiB`, `MiB`, `GiB`, `TiB` size |
 | `-q`, `--quiet` | Hide status, progress and errors; failures still return a nonzero exit code |
 | `--formats` | Compare formats, speeds and size savings in a compact table, then exit |
 | `-v`, `--version` | Print the version |
@@ -119,7 +119,7 @@ Unpacking-specific flags are listed under [Extraction limits](#extraction-limits
 | `bz3`, `bzip3` | [libbzip3](https://github.com/iczelia/bzip3), parallel independent blocks | [libbzip3](https://github.com/iczelia/bzip3), parallel independent blocks |
 | `bsc` | [libbsc](https://github.com/IlyaGrebnov/libbsc), parallel independent blocks | [libbsc](https://github.com/IlyaGrebnov/libbsc), parallel indexed blocks |
 | `knz` | [Kanzi C++ 2.6.0](https://github.com/flanglet/kanzi-cpp), native parallel blocks | [Kanzi C++ 2.6.0](https://github.com/flanglet/kanzi-cpp), native parallel blocks |
-| `xz`, `lzma2` | [liblzma](https://github.com/tukaani-project/xz), XZ container | [liblzma](https://github.com/tukaani-project/xz) |
+| `xz`, `lzma2` | [Fast LZMA2](https://github.com/conor42/fast-lzma2), standard XZ container; [liblzma](https://github.com/tukaani-project/xz) for level 1 and extreme | [liblzma](https://github.com/tukaani-project/xz) |
 | `lz`, `lzip` | [liblzma](https://github.com/tukaani-project/xz) raw LZMA1, Lzip v1 container | [liblzma](https://github.com/tukaani-project/xz), including concatenated members |
 | `zip` | [Go ZIP container](https://github.com/golang/go/tree/master/src/archive/zip); [libdeflate](https://github.com/ebiggers/libdeflate) or streaming [zlib-ng](https://github.com/zlib-ng/zlib-ng) | [Go ZIP container](https://github.com/golang/go/tree/master/src/archive/zip); [libdeflate](https://github.com/ebiggers/libdeflate) or streaming [zlib-ng](https://github.com/zlib-ng/zlib-ng); [libarchive](https://github.com/libarchive/libarchive) for advanced methods |
 | `zipx` | Extraction only | ZIP container with advanced methods through [libarchive](https://github.com/libarchive/libarchive) |
@@ -221,7 +221,7 @@ CAB, DEB, LHA/LZH and RPM are extraction-only, including when inferred from the 
 
 Levels represent effort rather than equivalent settings across codecs; higher settings may need substantially more memory. The thread budget is an upper bound for eligible work and some codecs remain single-threaded.
 
-`--memory` applies to BSC, BZIP3, Kanzi, Lzip, WIM and ESD for both packing and unpacking, and to LZMA-Alone packing. Other codecs use fixed budgets. These are allocation budgets, not whole-process RSS guarantees; other parallel decoder indexes and libarchive decoders are outside them. WIM/ESD include conservative metadata allowances. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
+`--memory` applies to BSC, BZIP3, Kanzi, Lzip, WIM and ESD for both packing and unpacking, and to XZ and LZMA-Alone packing. Other codecs use fixed budgets. These are allocation budgets, not whole-process RSS guarantees; other parallel decoder indexes and libarchive decoders are outside them. WIM/ESD include conservative metadata allowances. Libarchive's XZ/LZMA stream filters have a fixed 1 GiB decoder-memory ceiling. BSC's block index is included in its budget.
 
 ### Compression levels
 
@@ -247,7 +247,9 @@ The public levels 1 through 9 select these native settings (3 remains the balanc
 | WIM | XPRESS 25, 50; then LZX 25, 50, 75, 100, 125, 150, 175 |
 | ESD | LZMS 20, 40, 60, 80, 100, 120, 140, 160, 180 |
 | Kanzi block size (MiB) | 4, 4, 4, 4, 4, 8, 16, 16, 32 |
-| XZ / 7z LZMA2 / LZMA-Alone | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
+| XZ normal encoder preset | liblzma 0; then Fast LZMA2 1, 3, 4, 5, 6, 7, 8, 9 |
+| XZ dictionary (MiB) | 0.25, 1, 4, 4, 8, 8, 16, 32, 64 |
+| XZ extreme / 7z LZMA2 / LZMA-Alone liblzma preset | 0, 1, 3, 4, 5, 6, 7, 8, 9 |
 | Lzip dictionary (MiB) | 1, 1.5, 2, 3, 4, 8, 16, 24, 32 |
 | Lzip nice match length | 32, 32, 32, 32, 32, 64, 128, 163, 273 |
 
@@ -257,7 +259,7 @@ Zero and negative settings still compress; they do not select store mode. Zstand
 
 ### Automatic memory budgets
 
-For BSC, BZIP3, Kanzi, Lzip, WIM, ESD and LZMA-Alone packing, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
+For BSC, BZIP3, Kanzi, Lzip, WIM, ESD, XZ packing and LZMA-Alone packing, `--memory auto` uses **one quarter of the smallest reliable available-memory estimate, capped at 8 GiB**. The budget is refreshed whenever an encoder or decoder is initialized.
 
 | Available memory | Codec budget |
 | --- | --- |
@@ -284,6 +286,10 @@ These are snapshots, not a hard process-memory limit or a guarantee against OOM.
 
 ### Codec details
 
+XZ normal levels 2-9 use Fast LZMA2 1.0.1 with explicit effort and dictionary mappings; level 1 and `--extreme` / `--max` retain liblzma. Fast LZMA2 writes one standard CRC64-protected XZ block with bounded dictionary storage and a constant-size Index; it never buffers the whole file. Consequently, readers cannot parallelize decoding across XZ blocks. The decoder remains liblzma, including support for existing and concatenated streams. These mappings preserve the dictionary progression, not identical compressed sizes across encoders.
+
+XZ encoding admits the requested 1-200 compression workers only when the native streaming estimate plus buffer, allocator and thread-stack allowances fits `--memory`. It fails with guidance rather than silently reducing workers, dictionary or effort. Status output reports the backend, preset, dictionary, admitted workers and estimate. Small inputs may not occupy every worker. Fast LZMA2 uses an additional coordinating thread and timed native waits for cancellation; cleanup cancels and joins native work. The memory estimate is not an allocator-enforced process limit.
+
 Kanzi writes the official headered version-7 bitstream and reads version-7 streams from both upstream C++ and Go tools, including their other transform/entropy combinations. Older bitstream versions and concatenated streams are rejected. Native levels retain LZ, BWT, ROLZ, CM, TPAQ and TPAQX strategies; level 3 remains the default. Checksums, header integrity, declared sizes and stream termination are checked before reporting successful extraction.
 
 Kanzi admission reserves block buffers, transform tables, entropy state, growth copies and native worker overhead. Workers are capped at 64 and reduced to fit `--memory` and the known block count. The selected level and block size are never reduced; a budget too small for one worker fails before block/model allocation. Decompression performs the same preflight using the validated stream header. Estimates are conservative, particularly for small or easily compressed inputs. Level 9 uses 32 MiB blocks and requires substantially more memory per worker than the lower levels. Status output reports admitted jobs and reserved memory. Cancellation is checked between I/O operations and native transform/entropy phases; a running native phase must finish before cancellation can complete.
@@ -295,7 +301,8 @@ Kanzi admission reserves block buffers, transform tables, entropy state, growth 
 | --- | --- |
 | Gzip compression | Parallel, independent 1 MiB members in a standard concatenated stream; at most 16 in-flight workers |
 | ZIP compression | At most 16 in-flight workers; ordinary entries up to 8 MiB use reusable libdeflate contexts, larger entries stream through zlib-ng |
-| Zstandard / XZ encoding | Native worker counts reduced using a 2 GiB memory estimate |
+| Zstandard encoding | Native worker counts reduced using a 2 GiB memory estimate |
+| XZ encoding | Requested workers and effort must fit `--memory`; no silent reduction |
 | BZIP2 / LZ4 | Worker buffers and state bounded to approximately 256 MiB |
 | XZ decoding | Up to 2 GiB; parallelism reduced above 512 MiB |
 | Ordinary Zstandard decoding | Decoder windows limited to 1 GiB |
@@ -510,7 +517,7 @@ Temporary inputs and outputs are removed automatically. Process-level measuremen
 ## TODOs
 
 - Support PPMd for packing and unpacking.
-- Investigate [fast-lzma2](https://github.com/conor42/fast-lzma2) for XZ / 7z improvements.
+- Investigate [fast-lzma2](https://github.com/conor42/fast-lzma2) for 7z improvements.
 
 ## Third-party software
 

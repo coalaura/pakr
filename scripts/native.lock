@@ -1,4 +1,5 @@
 # name version sha256 source
+fast-lzma2 1.0.1 60fd0a031fb0a153ba4f00799aed443ce9f149b203c59e17e558afbfafe8bf64 https://codeload.github.com/conor42/fast-lzma2/tar.gz/refs/tags/v1.0.1
 wimlib 1.14.5 84221a3abd5b91228f15f8e6065c335a336237b5738197b75bf419eea561a194 https://wimlib.net/downloads/wimlib-1.14.5.tar.gz
 kanzi 2.6.0 fc031685ede00321b4ba09e4c451564e35d9e7339ea67dfb3278a8dd4cfddfd9 https://codeload.github.com/flanglet/kanzi-cpp/tar.gz/refs/tags/2.6.0
 zlib-ng 2.3.3 f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1 https://codeload.github.com/zlib-ng/zlib-ng/tar.gz/refs/tags/2.3.3
