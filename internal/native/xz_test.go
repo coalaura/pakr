@@ -21,6 +21,13 @@ type xzFailWriter struct {
 	err       error
 }
 
+type xzBlock struct {
+	offset       int
+	headerSize   int
+	unpadded     int
+	uncompressed int
+}
+
 func (writer *xzFailWriter) Write(data []byte) (int, error) {
 	count := min(len(data), writer.remaining)
 	writer.remaining -= count
@@ -146,6 +153,42 @@ func TestXZIntegrity(t *testing.T) {
 	}
 }
 
+func TestXZBlockBoundaries(t *testing.T) {
+	data := testData(6<<20 + 1)
+	sizes := []int{3<<20 - 1, 3 << 20, 3<<20 + 1, 6 << 20, 6<<20 + 1}
+
+	for _, size := range sizes {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			encoded, settings := encodeXZ(t, data[:size], 2, 1, false, 65537)
+
+			blocks := checkXZFraming(t, encoded, data[:size], settings.Dictionary)
+			expected := (size + 3<<20 - 1) / (3 << 20)
+
+			if len(blocks) != expected {
+				t.Fatalf("got %d blocks, want %d", len(blocks), expected)
+			}
+
+			consumed := 0
+
+			for _, block := range blocks {
+				if block.uncompressed != min(3<<20, size-consumed) {
+					t.Fatal("incorrect block boundary")
+				}
+
+				// Reframe each block by itself to prove it needs no earlier dictionary state.
+				standalone := xzSingleBlock(encoded, block)
+
+				actual, err := decodeXZ(standalone)
+				if err != nil || !bytes.Equal(actual, data[consumed:consumed+block.uncompressed]) {
+					t.Fatalf("independent block decode: %v", err)
+				}
+
+				consumed += block.uncompressed
+			}
+		})
+	}
+}
+
 func TestXZMemoryAndLegacy(t *testing.T) {
 	writer, err := NewXZWriter(t.Context(), io.Discard, 2, 1, false, 128<<20)
 	if err != nil {
@@ -193,9 +236,10 @@ func TestXZMemoryAndLegacy(t *testing.T) {
 }
 
 func TestXZOutputFailures(t *testing.T) {
-	data := testData(4097)
-	encoded, _ := encodeXZ(t, data, 3, 1, false, 317)
-	positions := []int{0, 24, len(encoded) - 12}
+	data := testData(6<<20 + 1)
+	encoded, settings := encodeXZ(t, data, 2, 1, false, 65537)
+	blocks := checkXZFraming(t, encoded, data, settings.Dictionary)
+	positions := []int{0, 24, blocks[1].offset + blocks[1].headerSize, len(encoded) - 12}
 	failure := errors.New("output failed")
 	errorsToReturn := []error{nil, failure}
 
@@ -203,7 +247,7 @@ func TestXZOutputFailures(t *testing.T) {
 		for _, outputError := range errorsToReturn {
 			target := &xzFailWriter{remaining: position, err: outputError}
 
-			writer, err := NewXZWriter(t.Context(), target, 3, 1, false, 128<<20)
+			writer, err := NewXZWriter(t.Context(), target, 2, 1, false, 128<<20)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,7 +388,7 @@ func xzRandom(size int) []byte {
 	return data
 }
 
-func checkXZFraming(t *testing.T, encoded, data []byte, dictionary int) {
+func checkXZFraming(t *testing.T, encoded, data []byte, dictionary int) []xzBlock {
 	t.Helper()
 
 	if len(encoded) < 56 || string(encoded[:6]) != "\xfd7zXZ\x00" || encoded[6] != 0 || encoded[7] != 4 || string(encoded[len(encoded)-2:]) != "YZ" {
@@ -356,53 +400,147 @@ func checkXZFraming(t *testing.T, encoded, data []byte, dictionary int) {
 		t.Fatal("invalid stream header/footer checksums or flags")
 	}
 
-	blockSize := (int(encoded[12]) + 1) * 4
-	block := encoded[12 : 12+blockSize]
-
-	if crc32.ChecksumIEEE(block[:blockSize-4]) != binary.LittleEndian.Uint32(block[blockSize-4:]) || block[1] != 0 || block[2] != 0x21 || block[3] != 1 {
-		t.Fatal("invalid single-filter streaming block header")
-	}
-
-	property := uint32(block[4])
-
-	actualDictionary := (uint32(2) | (property & 1)) << (property/2 + 11)
-	if actualDictionary != uint32(dictionary) {
-		t.Fatalf("dictionary property: %d, want %d", actualDictionary, dictionary)
-	}
-
 	indexSize := (int(binary.LittleEndian.Uint32(footer[4:])) + 1) * 4
 	indexStart := len(encoded) - 12 - indexSize
 
+	if indexStart < 12 || indexSize < 8 {
+		t.Fatal("invalid Index extent")
+	}
+
 	index := encoded[indexStart : len(encoded)-12]
-	if index[0] != 0 || index[1] != 1 || crc32.ChecksumIEEE(index[:len(index)-4]) != binary.LittleEndian.Uint32(index[len(index)-4:]) {
-		t.Fatal("invalid Index or record count")
+	if index[0] != 0 || crc32.ChecksumIEEE(index[:len(index)-4]) != binary.LittleEndian.Uint32(index[len(index)-4:]) {
+		t.Fatal("invalid Index checksum")
 	}
 
-	unpadded, count := binary.Uvarint(index[2:])
-	if count <= 0 {
-		t.Fatal("invalid unpadded size")
+	position := 1
+
+	records := xzVLI(t, index, &position)
+	if records < 1 || records > 1024 {
+		t.Fatalf("unbounded or empty Index: %d", records)
 	}
 
-	uncompressed, count := binary.Uvarint(index[2+count:])
-	if count <= 0 || uncompressed != uint64(len(data)) || (unpadded+3)&^3 != uint64(indexStart-12) {
-		t.Fatal("invalid Index sizes")
+	blocks := make([]xzBlock, 0, records)
+	offset := 12
+	consumed := 0
+	table := crc64.MakeTable(crc64.ECMA)
+
+	for range records {
+		unpadded := int(xzVLI(t, index, &position))
+		uncompressed := int(xzVLI(t, index, &position))
+		padded := (unpadded + 3) &^ 3
+
+		if unpadded < 20 || padded > indexStart-offset || uncompressed > len(data)-consumed {
+			t.Fatal("invalid Index sizes")
+		}
+
+		headerSize := (int(encoded[offset]) + 1) * 4
+		if headerSize > unpadded-9 {
+			t.Fatal("invalid block header extent")
+		}
+
+		header := encoded[offset : offset+headerSize]
+		if crc32.ChecksumIEEE(header[:headerSize-4]) != binary.LittleEndian.Uint32(header[headerSize-4:]) || header[1] != 0xc0 {
+			t.Fatal("block lacks valid checksum, single filter or both sizes for threaded decoding")
+		}
+
+		headerPosition := 2
+
+		compressedSize := xzVLI(t, header, &headerPosition)
+		uncompressedSize := xzVLI(t, header, &headerPosition)
+
+		if compressedSize != uint64(unpadded-headerSize-8) || uncompressedSize != uint64(uncompressed) {
+			t.Fatal("block header and Index sizes disagree")
+		}
+
+		if header[headerPosition] != 0x21 || header[headerPosition+1] != 1 {
+			t.Fatal("invalid LZMA2 filter")
+		}
+
+		property := uint32(header[headerPosition+2])
+
+		actualDictionary := (uint32(2) | (property & 1)) << (property/2 + 11)
+		if actualDictionary != uint32(dictionary) {
+			t.Fatalf("dictionary property: %d, want %d", actualDictionary, dictionary)
+		}
+
+		end := offset + unpadded - 8
+		check := offset + padded - 8
+
+		if encoded[end-1] != 0 {
+			t.Fatal("missing LZMA2 end marker or unexpected extra trailer")
+		}
+
+		for _, value := range encoded[end:check] {
+			if value != 0 {
+				t.Fatal("nonzero block padding")
+			}
+		}
+
+		checksum := crc64.Checksum(data[consumed:consumed+uncompressed], table)
+		if binary.LittleEndian.Uint64(encoded[check:]) != checksum {
+			t.Fatal("invalid CRC64")
+		}
+
+		blocks = append(blocks, xzBlock{offset: offset, headerSize: headerSize, unpadded: unpadded, uncompressed: uncompressed})
+
+		offset += padded
+		consumed += uncompressed
 	}
 
-	compressed := int(unpadded) - blockSize - 8
-
-	end := 12 + blockSize + compressed
-	if encoded[end-1] != 0 {
-		t.Fatal("missing LZMA2 end marker or unexpected extra trailer")
+	if offset != indexStart || consumed != len(data) || len(index)-4-position > 3 {
+		t.Fatal("incorrect aggregate Index sizes")
 	}
 
-	for _, value := range encoded[end : indexStart-8] {
+	for _, value := range index[position : len(index)-4] {
 		if value != 0 {
-			t.Fatal("nonzero block padding")
+			t.Fatal("nonzero Index padding")
 		}
 	}
 
-	checksum := crc64.Checksum(data, crc64.MakeTable(crc64.ECMA))
-	if binary.LittleEndian.Uint64(encoded[indexStart-8:indexStart]) != checksum {
-		t.Fatal("invalid CRC64")
+	return blocks
+}
+
+func xzVLI(t *testing.T, data []byte, position *int) uint64 {
+	t.Helper()
+
+	value, count := binary.Uvarint(data[*position:])
+	if count <= 0 || count > 9 || value > 1<<63-1 {
+		t.Fatal("invalid XZ VLI")
 	}
+
+	*position += count
+
+	return value
+}
+
+func xzSingleBlock(encoded []byte, block xzBlock) []byte {
+	padded := (block.unpadded + 3) &^ 3
+
+	stream := make([]byte, 0, padded+64)
+	stream = append(stream, encoded[:12]...)
+	stream = append(stream, encoded[block.offset:block.offset+padded]...)
+
+	indexStart := len(stream)
+
+	stream = append(stream, 0, 1)
+	stream = binary.AppendUvarint(stream, uint64(block.unpadded))
+	stream = binary.AppendUvarint(stream, uint64(block.uncompressed))
+
+	for len(stream)&3 != 0 {
+		stream = append(stream, 0)
+	}
+
+	stream = binary.LittleEndian.AppendUint32(stream, crc32.ChecksumIEEE(stream[indexStart:]))
+
+	indexSize := len(stream) - indexStart
+	footerStart := len(stream)
+
+	stream = binary.LittleEndian.AppendUint32(stream, 0)
+	stream = binary.LittleEndian.AppendUint32(stream, uint32(indexSize/4-1))
+	stream = append(stream, 0, 4, 'Y', 'Z')
+
+	checksum := crc32.ChecksumIEEE(stream[footerStart+4 : footerStart+10])
+	binary.LittleEndian.PutUint32(stream[footerStart:], checksum)
+
+	return stream
 }

@@ -61,6 +61,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 	"unsafe"
 )
 
@@ -77,12 +78,13 @@ const (
 )
 
 type Writer struct {
-	ctx    context.Context
-	codec  *C.pakr_codec
-	sizes  *[2]C.size_t
-	target io.Writer
-	buffer []byte
-	err    error
+	ctx      context.Context
+	codec    *C.pakr_codec
+	sizes    *[2]C.size_t
+	target   io.Writer
+	buffer   []byte
+	err      error
+	progress codecProgress
 }
 
 type Reader struct {
@@ -148,9 +150,8 @@ func (writer *Writer) Write(data []byte) (int, error) {
 			return written, err
 		}
 
-		if consumed == 0 && produced == 0 && C.pakr_codec_pending(writer.codec) == 0 {
-			writer.err = io.ErrNoProgress
-
+		writer.err = writer.checkProgress(consumed != 0 || produced != 0)
+		if writer.err != nil {
 			return written, writer.err
 		}
 	}
@@ -204,7 +205,34 @@ func (writer *Writer) finish() error {
 		if ended {
 			return nil
 		}
+
+		writer.err = writer.checkProgress(produced != 0)
+		if writer.err != nil {
+			return writer.err
+		}
 	}
+}
+
+func (writer *Writer) checkProgress(progressed bool) error {
+	var pending int
+
+	if !progressed {
+		pending = int(C.pakr_codec_pending(writer.codec))
+	}
+
+	if progressed || pending == 3 {
+		writer.progress = codecProgress{}
+
+		return nil
+	}
+
+	err := writer.progress.wait(time.Now(), pending == 2)
+	if err == nil {
+		// Native waits normally take 20 ms. Back off even if a broken backend returns immediately.
+		time.Sleep(time.Millisecond)
+	}
+
+	return err
 }
 
 func (writer *Writer) flush(size int) error {

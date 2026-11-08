@@ -217,7 +217,8 @@ int pakr_codec_parameter(pakr_codec *codec, int parameter) {
 int pakr_codec_step(pakr_codec *codec, const void *input, size_t *input_size, void *output, size_t *output_size, int finish) {
 	if (codec->xz_encoder) {
 		int status = pakr_xz_step(codec->xz_encoder, input, input_size, output, output_size, finish);
-		codec->pending = status == 2;
+		/* 2 is a timed async wait; 3 is internal byte/state progress. */
+		codec->pending = status >= 2 ? status : 0;
 		return status;
 	}
 	if (codec->lzip) return pakr_lzip_step(codec->lzip, input, input_size, output, output_size, finish);
