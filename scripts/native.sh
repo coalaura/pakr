@@ -37,9 +37,44 @@ hash_files() {
 	done
 }
 
-hash_tree() {
-	(cd "$1" && find -L . -type f -print0 | sort -z | xargs -0 -r sha256sum)
-}
+hash_tree() (
+	local directory file resolved existing covered scratch index=0
+	local -a directories
+	# A trailing slash preserves newlines in directory names during command substitution.
+	directory=$(cd -P -- "$1" && printf '%s/' "$PWD")
+	directories=("$directory")
+	scratch=$(mktemp -d "$build/fingerprint.XXXXXX")
+	trap 'rm -rf -- "$scratch"' EXIT
+
+	while (( index < ${#directories[@]} )); do
+		directory=${directories[$index]}
+		cd -- "$directory"
+		printf 'tree\0%s\0' "$index"
+		find . -type f -print0 | sort -z | xargs -0 -r sha256sum --zero --
+		# Materialize the list so find/sort failures cannot be lost in process substitution.
+		find . -type l -print0 | sort -z > "$scratch/links"
+		: > "$scratch/files"
+		while IFS= read -r -d '' file; do
+			printf 'link\0%s\0' "$file"
+			readlink -z -- "$file"
+			if [[ -f "$file" ]]; then
+				# Include contents even when a file link points outside the walked trees.
+				printf '%s\0' "$file" >> "$scratch/files"
+			elif [[ -d "$file" ]]; then
+				resolved=$(cd -P -- "$file" && printf '%s/' "$PWD")
+				covered=false
+				for existing in "${directories[@]}"; do
+					if [[ "$resolved" == "$existing"* ]]; then covered=true; break; fi
+				done
+				# External directories get their own non-following walk, once, even with cycles.
+				if [[ "$covered" == false ]]; then directories+=("$resolved"); fi
+			fi
+		done < "$scratch/links"
+		printf 'linked-files\0'
+		xargs -0 -r sha256sum --zero -- < "$scratch/files"
+		index=$((index + 1))
+	done
+)
 
 compiler_arguments() (
 	# Inspect the generated shell wrapper without invoking its compiler.
