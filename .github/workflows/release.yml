@@ -28,13 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Cache native dependencies
+      - name: Cache source archives
         uses: actions/cache@v6
         with:
-          path: |
-            .native/downloads
-            .native/${{ matrix.os }}-${{ matrix.arch }}
-          key: native-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/**', 'tools/toolchain/**', 'internal/native/parallel/**', 'internal/native/parallel.h', 'internal/native/wim/**', 'internal/native/wim.h') }}
+          path: .native/downloads
+          key: native-sources-v2-${{ hashFiles('scripts/native.lock') }}
+          restore-keys: native-sources-v2-
+
+      - name: Restore native libraries
+        id: native-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .native/${{ matrix.os }}-${{ matrix.arch }}
+          key: native-v2-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/native.sh', 'scripts/native-recipes.sh', 'scripts/native.lock', 'scripts/fetch.sh', 'scripts/patches/*.patch', 'scripts/*/CMakeLists.txt', 'tools/toolchain/*.go', 'tools/toolchain/go.mod', 'tools/toolchain/go.sum', 'internal/native/parallel/**', 'internal/native/parallel.h', 'internal/native/kanzi/**', 'internal/native/kanzi.h', 'internal/native/wim/**', 'internal/native/wim.h') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          restore-keys: native-v2-${{ matrix.os }}-${{ matrix.arch }}-
 
       - name: Build native libraries
         env:
@@ -45,17 +52,35 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             --workdir "$GITHUB_WORKSPACE" \
-            --env PAKR_TARGET_OS --env PAKR_TARGET_ARCH --env BUILD_IMAGE --env JOBS=2 \
+            --env PAKR_TARGET_OS --env PAKR_TARGET_ARCH --env BUILD_IMAGE --env JOBS=4 \
             --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" \
             --entrypoint sh "$BUILD_IMAGE" -ec '
+              mkdir -p .native dist
+              trap '\''chown -R "$HOST_UID:$HOST_GID" .native dist'\'' EXIT
               apk add --no-cache build-base cmake coreutils curl patch tar xz
               bash scripts/native.sh "$PAKR_TARGET_OS" "$PAKR_TARGET_ARCH"
               if [ "$PAKR_TARGET_OS/$PAKR_TARGET_ARCH" = linux/amd64 ]; then
                 bash scripts/source.sh "${{ github.ref_name }}"
               fi
-              chown -R "$HOST_UID:$HOST_GID" .native
-              if [ -d dist ]; then chown -R "$HOST_UID:$HOST_GID" dist; fi
             '
+
+      - name: Save updated native libraries
+        if: ${{ !cancelled() && hashFiles(format('.native/build/{0}-{1}/cache-changed', matrix.os, matrix.arch)) != '' && hashFiles(format('.native/build/{0}-{1}/cache-ready', matrix.os, matrix.arch)) != '' }}
+        uses: actions/cache/save@v6
+        with:
+          path: .native/${{ matrix.os }}-${{ matrix.arch }}
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Upload failed native build logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-logs-release-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            .native/build/**/*.log
+            .native/build/**/CMakeFiles/CMakeConfigureLog.yaml
+          include-hidden-files: true
+          retention-days: 7
 
       - name: Upload corresponding source
         if: matrix.os == 'linux' && matrix.arch == 'amd64'

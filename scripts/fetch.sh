@@ -16,11 +16,16 @@ while read -r name version checksum url; do
 		mv "$archive.part" "$archive"
 	fi
 	printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status
-	source_stamp=$checksum
 	patches=("$root/scripts/patches/$name-"*.patch)
-	if (( ${#patches[@]} )); then
-		source_stamp="$checksum-$(cat "${patches[@]}" | sha256sum | cut -d ' ' -f 1)"
-	fi
+	source_stamp=$(
+		printf '%s\n' "$checksum"
+		sha256sum < "$root/scripts/fetch.sh"
+		for source_patch in "${patches[@]}"; do
+			printf '%s\n' "${source_patch##*/}"
+			sha256sum < "$source_patch"
+		done
+	)
+	source_stamp=$(printf '%s' "$source_stamp" | sha256sum | cut -d ' ' -f 1)
 	if [[ ! -f "$cache/src/$name/.pakr-$source_stamp" ]]; then
 		rm -rf "$cache/src/$name"
 		mkdir -p "$cache/src/$name"

@@ -1,134 +1,215 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
+shopt -s nullglob inherit_errexit
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 target=${1:-linux}
 arch=${2:-amd64}
-jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN)}
 case "$target/$arch" in
 	linux/amd64|linux/arm64|windows/amd64|windows/arm64|darwin/amd64|darwin/arm64) ;;
 	*) printf 'Unsupported target: %s/%s\n' "$target" "$arch" >&2; exit 1 ;;
 esac
 
+source "$root/scripts/native-jobs.sh"
+source "$root/scripts/native-recipes.sh"
+jobs=$(native_jobs)
 prefix="$root/.native/$target-$arch"
 build="$root/.native/build/$target-$arch"
+sources="$root/.native/src"
 toolchain="$build/toolchain"
-mkdir -p "$prefix/include" "$prefix/lib" "$build"
+state="$prefix/.state"
+mkdir -p "$prefix/include" "$prefix/lib" "$build" "$state"
+rm -f "$build/cache-ready"
+printf 'Native workers: %s (requested maximum: %s)\n' "$jobs" "${JOBS:-4}"
 bash "$root/scripts/fetch.sh"
-
-signature=$(cat "$root/scripts/native.lock" "$root/scripts/native.sh" "$root/scripts/fetch.sh" "$root/scripts/patches/"*.patch "$root/scripts/bzip2/CMakeLists.txt" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.sum"; zig version)
-signature=$(printf '%s' "$signature" | sha256sum | cut -d ' ' -f 1)
 (cd "$root/tools/toolchain" && go run -buildvcs=false . "$target" "$arch" "$toolchain")
 
-build_cmake() {
-	local name=$1 source=$2
-	shift 2
-	printf 'Building %s for %s/%s\n' "$name" "$target" "$arch"
-	if ! (
-		cmake --fresh -S "$source" -B "$build/$name" -G 'Unix Makefiles' \
-			-DCMAKE_TOOLCHAIN_FILE="$toolchain/toolchain.cmake" \
-			-DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib \
-			-DCMAKE_FIND_ROOT_PATH="$prefix" -DCMAKE_PREFIX_PATH="$prefix" \
-			-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF "$@" &&
-		cmake --build "$build/$name" --parallel "$jobs" &&
-		cmake --install "$build/$name"
-	) >"$build/$name.log" 2>&1; then
-		tail -n 80 "$build/$name.log" >&2
-		exit 1
+digest() {
+	sha256sum | cut -d ' ' -f 1
+}
+
+hash_files() {
+	local file
+	for file in "$@"; do
+		printf '%s\0' "${file#"$root/"}"
+		sha256sum < "$file"
+	done
+}
+
+hash_tree() {
+	(cd "$1" && find -L . -type f -print0 | sort -z | xargs -0 -r sha256sum)
+}
+
+compiler_arguments() (
+	# Inspect the generated shell wrapper without invoking its compiler.
+	exec() { printf '%s\n' "$@"; }
+	source "$toolchain/cc"
+)
+
+toolchain_signature() {
+	local argument previous= zig_lib
+	printf '%s\n' "$target/$arch" "${BUILD_IMAGE_ID:-local}"
+	hash_files "$root/scripts/native.sh" "$root/scripts/fetch.sh" "$root/tools/toolchain/main.go" "$root/tools/toolchain/go.mod" "$root/tools/toolchain/go.sum"
+	for argument in cc cxx ar ranlib toolchain.cmake; do
+		# Workspace paths do not change the target ABI; SDK paths and flags do.
+		sed "s|$root|<workspace>|g" "$toolchain/$argument"
+	done
+	zig version
+	sha256sum < "$(command -v zig)"
+	# Zig's bundled headers and libc sources are also effective toolchain inputs.
+	zig_lib=$(zig env | sed -nE 's/^[[:space:]]*(\.lib_dir =|"lib_dir":) "(.*)",$/\2/p')
+	[[ -n "$zig_lib" ]]
+	hash_tree "$zig_lib"
+	while IFS= read -r argument; do
+		if [[ "$previous" == --sysroot ]]; then hash_tree "$argument"; fi
+		previous=$argument
+	done < <(compiler_arguments)
+	cmake --version
+	make --version
+	printf '%s\n' "${CFLAGS:-}" "${CXXFLAGS:-}" "${CPPFLAGS:-}" "${LDFLAGS:-}" "${SDKROOT:-}" "${MACOSX_DEPLOYMENT_TARGET:-}"
+	printf '%s\n' "${ZIG_LIBC:-}" "${C_INCLUDE_PATH:-}" "${CPLUS_INCLUDE_PATH:-}" "${LIBRARY_PATH:-}" "${CPATH:-}" "${PKG_CONFIG_PATH:-}"
+}
+
+component_signature() {
+	local dependency line name version checksum url
+	printf '%s\n' "$common_signature"
+	declare -f "recipe_${component//-/_}"
+	while read -r name version checksum url; do
+		if [[ "$name" == "$source_name" ]]; then
+			printf '%s\n' "$name $version $checksum $url"
+			break
+		fi
+	done < "$root/scripts/native.lock"
+	[[ "$name" == "$source_name" ]] || return 1
+	hash_files "$root/scripts/patches/$source_name-"*.patch
+	for line in "${inputs[@]}"; do hash_files "$root/$line"; done
+	for dependency in "${dependencies[@]}"; do
+		printf '%s %s\n' "$dependency" "${signatures[$dependency]}"
+	done
+	if [[ "$build_kind" == nasm ]]; then
+		uname -sm
+		cc --version
+		sha256sum < "$(command -v cc)"
 	fi
 }
 
-build_parallel() {
-	local bridge_signature
-	bridge_signature=$(cat "$root/scripts/parallel/CMakeLists.txt" "$root/internal/native/parallel/parallel.cc" "$root/internal/native/parallel.h"; printf '%s' "$signature")
-	bridge_signature=$(printf '%s' "$bridge_signature" | sha256sum | cut -d ' ' -f 1)
-	if [[ -f "$prefix/.parallel-$bridge_signature" && -f "$prefix/lib/libpakr_parallel.a" ]]; then
-		return
+phase() {
+	local label=$1 started=$SECONDS status=0
+	shift
+	printf '[%s] %s started\n' "$component" "$label" >> "$log"
+	"$@" >> "$log" 2>&1 || status=$?
+	printf '[%s] %s: %ss (exit %s)\n' "$component" "$label" "$((SECONDS - started))" "$status" | tee -a "$log"
+	if (( status != 0 )); then
+		printf '[%s] failed; detailed log: %s\n' "$component" "$log" >&2
+		tail -n 80 "$log" >&2
+		exit "$status"
 	fi
-	build_cmake parallel "$root/scripts/parallel" -DSOURCE="$root/.native/src/rapidgzip"
-	rm -f "$prefix"/.parallel-*
-	touch "$prefix/.parallel-$bridge_signature"
 }
 
-build_kanzi() {
-	local bridge_signature
-	bridge_signature=$(cat "$root/scripts/kanzi/CMakeLists.txt" "$root/internal/native/kanzi/kanzi.cc" "$root/internal/native/kanzi.h"; printf '%s' "$signature")
-	bridge_signature=$(printf '%s' "$bridge_signature" | sha256sum | cut -d ' ' -f 1)
-	if [[ -f "$prefix/.kanzi-$bridge_signature" && -f "$prefix/lib/libpakr_kanzi.a" ]]; then
-		return
-	fi
-	build_cmake kanzi "$root/scripts/kanzi" -DSOURCE="$root/.native/src/kanzi"
-	rm -f "$prefix"/.kanzi-*
-	touch "$prefix/.kanzi-$bridge_signature"
+build_component() {
+	case "$build_kind" in
+		cmake)
+			phase configure cmake -S "$cmake_source" -B "$build/$component" -G 'Unix Makefiles' \
+				-DCMAKE_TOOLCHAIN_FILE="$toolchain/toolchain.cmake" \
+				-DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib \
+				-DCMAKE_FIND_ROOT_PATH="$prefix" -DCMAKE_PREFIX_PATH="$prefix" \
+				-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF "${cmake_options[@]}"
+			phase compile cmake --build "$build/$component" --parallel "$jobs" --verbose
+			phase install env DESTDIR="$stage" cmake --install "$build/$component"
+			;;
+		isal)
+			cp -a "$sources/isal/." "$build/$component/"
+			phase compile make -C "$build/$component" -f Makefile.unx -j "$jobs" bin/isa-l.a units=igzip arch="$isal_arch" CC="$toolchain/cc" AR="$toolchain/ar" AS="$prefix/bin/nasm"
+			mkdir -p "$stage$prefix/lib" "$stage$prefix/include"
+			cp "$build/$component/bin/isa-l.a" "$stage$prefix/lib/libisal.a"
+			cp "$sources/isal/include/igzip_lib.h" "$sources/isal/include/crc.h" "$stage$prefix/include/"
+			;;
+		nasm)
+			pushd "$build/$component" >/dev/null
+			phase configure "$sources/nasm/configure" --prefix="$prefix"
+			phase compile make -j "$jobs"
+			phase install make DESTDIR="$stage" install
+			popd >/dev/null
+			;;
+	esac
 }
 
-build_wim() {
-	local bridge_signature
-	bridge_signature=$(cat "$root/scripts/wimlib/CMakeLists.txt" "$root/internal/native/wim/wim.c" "$root/internal/native/wim.h"; printf '%s' "$signature")
-	bridge_signature=$(printf '%s' "$bridge_signature" | sha256sum | cut -d ' ' -f 1)
-	if [[ -f "$prefix/.wim-$bridge_signature" && -f "$prefix/lib/libwim.a" ]]; then
-		return
-	fi
-	build_cmake wim "$root/scripts/wimlib" -DSOURCE="$root/.native/src/wimlib"
-	rm -f "$prefix"/.wim-*
-	touch "$prefix/.wim-$bridge_signature"
+verify_outputs() {
+	local directory=$1 archive
+	for archive in "${archives[@]}"; do
+		[[ -s "$directory/lib/$archive" ]] || return 1
+	done
+	if [[ "$build_kind" == nasm ]]; then [[ -x "$directory/bin/nasm" ]] || return 1; fi
 }
 
-if [[ -f "$prefix/.complete-$signature" ]]; then
-	printf 'Native libraries ready: %s/%s\n' "$target" "$arch"
-	build_parallel
-	build_kanzi
-	build_wim
-	exit 0
-fi
+fingerprint_started=$SECONDS
+common_signature=$(toolchain_signature | digest)
+printf 'Toolchain fingerprint: %s (%ss)\n' "$common_signature" "$((SECONDS - fingerprint_started))"
+declare -A signatures
+components=(zlib-ng zstd bzip2 bzip3 libbsc xz lz4 brotli libdeflate)
+if [[ "$arch" == amd64 ]]; then components+=(nasm); fi
+components+=(isal libarchive parallel kanzi wim)
 
-sources="$root/.native/src"
-build_cmake zlib-ng "$sources/zlib-ng" -DZLIB_COMPAT=ON -DZLIB_ENABLE_TESTS=OFF -DZLIBNG_ENABLE_TESTS=OFF
-build_cmake zstd "$sources/zstd/build/cmake" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_MULTITHREAD_SUPPORT=ON
-build_cmake bzip2 "$root/scripts/bzip2" -DSOURCE="$sources/bzip2"
-build_cmake bzip3 "$sources/bzip3" -DBZIP3_BUILD_APPS=OFF -DBZIP3_ENABLE_PTHREAD=OFF -DBZIP3_ENABLE_ARCH_NATIVE=OFF
-build_cmake libbsc "$sources/libbsc" -DBSC_ENABLE_NATIVE_COMPILATION=OFF -DBSC_ENABLE_CPU_DISPATCH=ON -DBSC_ENABLE_OPENMP=OFF -DBSC_ENABLE_CUDA=OFF -DBSC_BUILD_SHARED_LIB=OFF
-build_cmake xz "$sources/xz" -DXZ_NLS=OFF -DXZ_TOOL_XZ=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF -DXZ_TOOL_LZMAINFO=OFF -DXZ_DOC=OFF -DXZ_EXTERNAL_SHA256=OFF
-build_cmake lz4 "$sources/lz4/build/cmake" -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF -DLZ4_STATIC_MULTITHREAD=ON
-build_cmake brotli "$sources/brotli" -DBROTLI_DISABLE_TESTS=ON
-build_cmake libdeflate "$sources/libdeflate" -DLIBDEFLATE_BUILD_SHARED_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF
-
-if [[ "$arch" == amd64 ]]; then
-	nasm="$root/.native/host/bin/nasm"
-	if [[ ! -x "$nasm" ]]; then
-		printf 'Building host assembler\n'
-		mkdir -p "$root/.native/build/nasm"
-		(cd "$root/.native/build/nasm" && "$sources/nasm/configure" --prefix="$root/.native/host" && make -j "$jobs" && make install) >"$build/nasm.log" 2>&1
+for component in "${components[@]}"; do
+	source_name=$component
+	build_kind=cmake
+	cmake_source="$sources/$component"
+	inputs=() dependencies=() archives=() cmake_options=()
+	"recipe_${component//-/_}"
+	signature=$(component_signature | digest)
+	signatures[$component]=$signature
+	marker="$state/$component.complete"
+	manifest="$state/$component.manifest"
+	manifest_valid=false
+	reason='no completion marker'
+	started=$SECONDS
+	if [[ -f "$marker" ]]; then
+		read -r previous_signature manifest_digest < "$marker" || true
+		if [[ -s "$manifest" ]] && [[ "$(digest < "$manifest")" == "$manifest_digest" ]]; then manifest_valid=true; fi
+		if [[ "$previous_signature" != "$signature" ]]; then
+			reason='source, recipe, dependency or toolchain changed'
+		elif [[ "$manifest_valid" != true ]]; then
+			reason='missing or corrupt installed-file manifest'
+		elif ! verify_outputs "$prefix" || ! (cd "$prefix" && sha256sum --check --status "$manifest"); then
+			reason='missing or corrupt installed files'
+		else
+			printf '[%s] cache hit; verified successfully (%ss)\n' "$component" "$((SECONDS - started))"
+			continue
+		fi
 	fi
-else
-	nasm=false
-fi
+	printf '[%s] rebuild: %s\n' "$component" "$reason"
+	printf 'changed\n' > "$build/cache-changed"
+	# Invalidate before touching any installed output. A failed retry cannot hit.
+	rm -f "$marker"
+	rm -rf "$build/$component" "$build/stage-$component"
+	stage="$build/stage-$component"
+	mkdir -p "$build/$component" "$stage"
+	log="$build/$component.log"
+	: > "$log"
+	build_component
+	verify_outputs "$stage$prefix"
+	# Only installed outputs are cached, never object files or CMake build trees.
+	(cd "$stage$prefix" && find . \( -type f -o -type l \) -print0 | sort -z | xargs -0 -r sha256sum) > "$manifest.tmp"
+	[[ -s "$manifest.tmp" ]]
+	# Only trust verified ownership when removing outputs dropped by a newer version.
+	if [[ "$manifest_valid" == true ]]; then
+		while read -r checksum file; do
+			case "$file" in
+				./include/*|./lib/*|./bin/*|./share/*)
+					if [[ "$file" != *'/../'* ]]; then rm -f "$prefix/$file"; fi
+					;;
+			esac
+		done < "$manifest"
+	fi
+	cp -a "$stage$prefix/." "$prefix/"
+	(cd "$prefix" && sha256sum --check --status "$manifest.tmp")
+	mv "$manifest.tmp" "$manifest"
+	printf '%s %s\n' "$signature" "$(digest < "$manifest")" > "$marker.tmp"
+	mv "$marker.tmp" "$marker"
+	rm -rf "$stage"
+	printf '[%s] completed successfully: %ss\n' "$component" "$((SECONDS - started))"
+done
 
-printf 'Building ISA-L for %s/%s\n' "$target" "$arch"
-rm -rf "$build/isal"
-mkdir -p "$build/isal"
-cp -a "$sources/isal/." "$build/isal/"
-isal_arch=
-if [[ "$target" == windows ]]; then isal_arch=mingw; fi
-if [[ "$target" == darwin ]]; then isal_arch=Darwin; fi
-if [[ "$arch" == arm64 ]]; then isal_arch=noarch; fi
-if ! make -C "$build/isal" -f Makefile.unx -j "$jobs" bin/isa-l.a units=igzip arch="$isal_arch" CC="$toolchain/cc" AR="$toolchain/ar" AS="$nasm" >"$build/isal.log" 2>&1; then
-	tail -n 80 "$build/isal.log" >&2
-	exit 1
-fi
-cp "$build/isal/bin/isa-l.a" "$prefix/lib/libisal.a"
-cp "$sources/isal/include/igzip_lib.h" "$sources/isal/include/crc.h" "$prefix/include/"
-
-build_cmake libarchive "$sources/libarchive" \
-	-DENABLE_TEST=OFF -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF \
-	-DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_CNG=OFF \
-	-DENABLE_LIBB2=OFF -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF \
-	-DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_ICONV=OFF \
-	-DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_WIN32_XMLLITE=OFF \
-	-DENABLE_ZLIB=ON -DENABLE_BZip2=ON -DENABLE_LZMA=ON -DENABLE_ZSTD=ON -DENABLE_LZ4=ON
-
-rm -f "$prefix"/.complete-*
-touch "$prefix/.complete-$signature"
-build_parallel
-build_kanzi
-build_wim
+printf 'ready\n' > "$build/cache-ready"
+printf 'Native libraries ready: %s/%s\n' "$target" "$arch"
