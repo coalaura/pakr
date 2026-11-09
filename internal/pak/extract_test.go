@@ -196,6 +196,65 @@ func TestExtractionDirectoryReplacement(t *testing.T) {
 	}
 }
 
+func TestExtractionAncestorReplacement(t *testing.T) {
+	kinds := []string{"directory", "symlink", "removed"}
+
+	for _, kind := range kinds {
+		t.Run(kind, func(t *testing.T) {
+			output := t.TempDir()
+
+			root, err := os.OpenRoot(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer root.Close()
+
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+
+			extract := extractor{root: root, copying: &copier{ctx: ctx}, budget: newExtractionBudget(ctx, nil, cancel)}
+
+			err = extract.entry(native.Header{Name: "parent/child/first", Kind: native.Regular, Mode: 0o600}, bytes.NewReader(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = root.Rename("parent", "original")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			switch kind {
+			case "directory":
+				err = root.Mkdir("parent", 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// Keep the original leaf identity: checking only the leaf would
+				// miss the replacement of its ancestor.
+				err = root.Rename("original/child", "parent/child")
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				mustDirectorySymlink(t, "original", filepath.Join(output, "parent"))
+			}
+
+			err = extract.entry(native.Header{Name: "parent/child/second", Kind: native.Regular, Mode: 0o600}, bytes.NewReader(nil))
+			if err == nil {
+				t.Fatal("replaced implicit ancestor accepted")
+			}
+
+			_, err = root.Stat("parent/child/second")
+			if !os.IsNotExist(err) {
+				t.Fatalf("file published through replaced ancestor: %v", err)
+			}
+		})
+	}
+}
+
 func unpackDirectoryHeaders(t *testing.T, output, name string, headers []tar.Header) error {
 	t.Helper()
 

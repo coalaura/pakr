@@ -28,7 +28,7 @@ type extractionDirectory struct {
 }
 
 type extractionDirectories struct {
-	mutex   sync.Mutex
+	mutex   sync.RWMutex
 	created map[string]int
 	entries []extractionDirectory
 }
@@ -160,53 +160,112 @@ func (extract *extractor) directory(name string, header *native.Header, exclusiv
 	}
 
 	directories := extract.directoryState()
-
-	directories.mutex.Lock()
-	defer directories.mutex.Unlock()
-
+	parent := extract.root
 	end := 0
 
+	defer func() {
+		if parent != extract.root {
+			parent.Close()
+		}
+	}()
+
+	// Walk relative to pinned parents instead of resolving every prefix from
+	// the extraction root. This keeps deep paths linear without caching handles.
 	for component := range strings.SplitSeq(name, "/") {
 		end += len(component) + 1
 		prefix := name[:end-1]
 
-		info, err := extract.root.Lstat(prefix)
-		if errors.Is(err, os.ErrNotExist) {
-			err = extract.root.Mkdir(prefix, 0o755)
-			if err != nil {
-				return err
-			}
-
-			info, err = extract.root.Lstat(prefix)
-			if err == nil && info.IsDir() {
-				directories.created[prefix] = len(directories.entries)
-				directories.entries = append(directories.entries, extractionDirectory{info: info})
-			}
-		} else if err == nil && exclusive && prefix == name {
-			return fmt.Errorf("output already exists: %s", name)
-		}
-
+		info, err := directories.directoryInfo(parent, component, prefix, exclusive && prefix == name)
 		if err != nil {
 			return err
 		}
 
-		if !info.IsDir() {
-			return fmt.Errorf("conflicting directory entry: %s", prefix)
-		}
+		if prefix == name {
+			if header != nil {
+				directories.mutex.Lock()
 
-		if index, created := directories.created[prefix]; created {
-			entry := &directories.entries[index]
-			if !os.SameFile(entry.info, info) {
-				return fmt.Errorf("directory changed during extraction: %s", prefix)
+				if index, created := directories.created[prefix]; created {
+					directories.entries[index].header = *header
+				}
+
+				directories.mutex.Unlock()
 			}
 
-			if prefix == name && header != nil {
-				entry.header = *header
-			}
+			return nil
 		}
+
+		next, err := parent.OpenRoot(component)
+		if err != nil {
+			return err
+		}
+
+		pinned, err := next.Stat(".")
+		if err != nil || !os.SameFile(info, pinned) {
+			next.Close()
+
+			return fmt.Errorf("directory changed during extraction: %s", prefix)
+		}
+
+		if parent != extract.root {
+			parent.Close()
+		}
+
+		parent = next
 	}
 
 	return nil
+}
+
+func (directories *extractionDirectories) directoryInfo(parent *os.Root, component, name string, exclusive bool) (os.FileInfo, error) {
+	info, err := parent.Lstat(component)
+	if errors.Is(err, os.ErrNotExist) {
+		// Only creation is serialized. Recheck after locking because another ZIP
+		// worker may have created and registered this directory in the meantime.
+		directories.mutex.Lock()
+		defer directories.mutex.Unlock()
+
+		info, err = parent.Lstat(component)
+		if errors.Is(err, os.ErrNotExist) {
+			err = parent.Mkdir(component, 0o755)
+			if err != nil {
+				return nil, err
+			}
+
+			info, err = parent.Lstat(component)
+			if err == nil && info.IsDir() {
+				// A removed directory must not be re-registered with a new identity.
+				if _, created := directories.created[name]; !created {
+					directories.created[name] = len(directories.entries)
+					directories.entries = append(directories.entries, extractionDirectory{info: info})
+				}
+			}
+		} else if err == nil && exclusive {
+			return nil, fmt.Errorf("output already exists: %s", name)
+		}
+	} else {
+		if err == nil && exclusive {
+			return nil, fmt.Errorf("output already exists: %s", name)
+		}
+
+		directories.mutex.RLock()
+		defer directories.mutex.RUnlock()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.IsDir() {
+		return nil, fmt.Errorf("conflicting directory entry: %s", name)
+	}
+
+	if index, created := directories.created[name]; created {
+		if !os.SameFile(directories.entries[index].info, info) {
+			return nil, fmt.Errorf("directory changed during extraction: %s", name)
+		}
+	}
+
+	return info, nil
 }
 
 func (extract *extractor) directoryState() *extractionDirectories {

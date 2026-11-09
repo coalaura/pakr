@@ -237,6 +237,12 @@ func (writer *Writer) checkProgress(progressed bool) error {
 
 func (writer *Writer) flush(size int) error {
 	if size == 0 {
+		// Native work can consume the final input without producing output.
+		// Still observe cancellation before Write or Close reports success.
+		if writer.ctx != nil {
+			return context.Cause(writer.ctx)
+		}
+
 		return nil
 	}
 
