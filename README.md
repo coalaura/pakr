@@ -57,7 +57,7 @@ Kanzi also accepts a raw byte stream from stdin: `pakr pack - -f knz -o -`. Use 
 
 `pakr unpack <archive | ->` extracts into the current directory unless `-o` specifies a destination. It detects formats from the extension, then recognizable signatures, including ISO9660 volume descriptors and CPIO inside gzip/BZIP2/XZ/ZSTD. Specify `-f` for Brotli, LHA/LZH or legacy LZMA without an extension, or compressed tar from stdin or a file without a recognized extension.
 
-Explicit and automatically detected sequential codec/tar formats stream directly from stdin; automatic detection probes compressed input for CPIO without spooling ordinary streams. ZIP/ZIPX, RAR, 7z, BSC and the legacy libarchive containers/streams require temporary-file spooling for extraction. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
+Explicit and automatically detected sequential codec/tar formats stream directly from stdin; automatic detection probes compressed input for CPIO without spooling ordinary streams. ZIP/ZIPX, RAR, 7z, BSC, WIM/ESD and the legacy libarchive containers/streams require temporary-file spooling for extraction. Raw streams extract to the input filename with its final extension removed or to `stdin` for piped input. Raw Kanzi also supports decompression to stdout with `pakr unpack input.knz -o -`; extraction limits and stream validation still apply.
 
 ### Extraction limits
 
@@ -76,6 +76,8 @@ pakr unpack backup.zip -o restored --max-output 32TiB --max-file-size 2TiB
 Declared sizes are checked before extraction; streams without sizes are checked as they produce output. ZIP workers share one budget. Exceeding a limit cancels extraction and removes incomplete files; already completed entries remain.
 
 Payload limits exclude container headers and padding. They do not impose a whole-process memory (RSS) limit on native decoders or metadata.
+
+Stdin temporary-file spooling has a separate input-byte bound for every seek-required format and unrecognized input: the smaller of `--max-output` and 16 TiB (16 TiB when disabled), plus 12.5% and 256 MiB for framing. This bounds disk spooling, independently of codec-memory budgets and extracted-payload accounting; it includes all container metadata, padding and unselected WIM images. Over-limit input fails and its temporary file is removed. Sequential streams are not spooled or subject to this bound.
 
 ### Options
 
@@ -201,7 +203,7 @@ Windows symlink extraction requires a direct, existing target in the selected im
 
 Extraction preflights the selected tree and limits, verifies resource hashes (and integrity tables when present), then publishes through `os.Root` without overwriting. Native decoding writes only generated blob names in a private staging directory, never archive paths or links. Failed publication removes entries created by that job. Staging needs disk space for unique uncompressed resources in addition to final output. Output directories must not already contain the archive's paths, including directories. Capture checks the scanned manifest again and fails if entries change type, size or membership; callers should keep inputs stable during capture.
 
-Standard WIMs require seeking. Stdout packing completes a temporary archive before copying it; stdin extraction uses bounded disk spooling. The stdin bound is the smaller of `--max-output` and 16 TiB (16 TiB when the limit is disabled), plus 12.5% and 256 MiB for framing. This bound applies to the whole input, including unselected images.
+Standard WIMs require seeking. Stdout packing completes a temporary archive before copying it; stdin extraction uses the bounded disk spooling described under [Extraction limits](#extraction-limits).
 
 WIM/ESD use native compression workers, reducing their count to fit `--memory` without lowering compression effort. Budgets include native compressor estimates, chunk queues and conservative metadata allowances; a budget that cannot fit one worker fails. ESD's 64 MiB chunks can require substantial memory. Actual worker counts are reported when writing; small inputs may use fewer workers. Extraction has one native decoder. WIM jobs within one process are serialized because native compression defaults are global. Allocation estimates are not a hard RSS cap.
 

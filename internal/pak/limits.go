@@ -133,3 +133,14 @@ func newExtractionBudget(ctx context.Context, limits *ExtractionLimits, cancel c
 
 	return &extractionBudget{ctx: ctx, limits: settings, cancel: cancel}
 }
+
+func stdinSpoolLimit(limits *ExtractionLimits) int64 {
+	maximum := uint64(DefaultMaxOutput)
+
+	if limits != nil && limits.MaxOutput != 0 {
+		maximum = min(maximum, limits.MaxOutput)
+	}
+
+	// Allow container metadata and incompressible framing, but always bound stdin.
+	return int64(maximum + maximum/8 + 256<<20)
+}

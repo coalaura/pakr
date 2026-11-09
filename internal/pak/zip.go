@@ -335,6 +335,7 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 	defer cancel()
 
 	jobs := make(chan *zip.File)
+	directories := extract.directoryState()
 
 	var (
 		pending sync.WaitGroup
@@ -358,7 +359,7 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 
 			decoder := zipDecoder{codec: codec}
 			copying := copier{ctx: ctx, progress: extract.copying.progress, buffer: make([]byte, native.BufferSize)}
-			worker := extractor{root: extract.root, copying: &copying, budget: extract.budget, prechecked: true}
+			worker := extractor{root: extract.root, copying: &copying, budget: extract.budget, directories: directories, prechecked: true}
 
 			for file := range jobs {
 				workerErr = decoder.extract(file, &worker)

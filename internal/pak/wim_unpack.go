@@ -307,10 +307,7 @@ func publishWIM(items []wimItem, stage *wimStage, extract *extractor) (result er
 		}
 
 		if item.header.Kind == native.Directory {
-			err = extract.root.Mkdir(item.header.Name, 0o755)
-			if err == nil {
-				extract.directories = append(extract.directories, item.header)
-			}
+			err = extract.directory(item.header.Name, &item.header, true)
 		} else {
 			var (
 				source io.Reader = bytes.NewReader(nil)

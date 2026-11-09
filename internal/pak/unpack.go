@@ -72,17 +72,13 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 				inputSource = buffered
 			}
 
-			if options.Format.Container == "wim" {
-				limit := wimSpoolLimit(options.Limits)
+			limit := stdinSpoolLimit(options.Limits)
 
-				var count int64
+			var count int64
 
-				count, err = copying.copy(temporary, io.LimitReader(inputSource, limit+1))
-				if err == nil && count > limit {
-					err = fmt.Errorf("WIM stdin exceeds spool limit of %d bytes: %w", limit, ErrExtractionLimit)
-				}
-			} else {
-				_, err = copying.copy(temporary, inputSource)
+			count, err = copying.copy(temporary, io.LimitReader(inputSource, limit+1))
+			if err == nil && count > limit {
+				err = fmt.Errorf("stdin exceeds spool limit of %d bytes: %w", limit, ErrExtractionLimit)
 			}
 
 			err = closeWithError(temporary, err)
