@@ -517,7 +517,6 @@ Temporary inputs and outputs are removed automatically. Process-level measuremen
 ## TODOs
 
 - Support PPMd for packing and unpacking.
-- Investigate [fast-lzma2](https://github.com/conor42/fast-lzma2) for 7z improvements.
 
 ## Third-party software
 
