@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/coalaura/pakr/internal/interop"
@@ -55,9 +56,13 @@ func TestXZCLIContainers(t *testing.T) {
 			command := exec.CommandContext(t.Context(), cli, "--decompress", "--stdout", "--threads=1", "--memlimit-decompress=64MiB")
 			command.Stdin = bytes.NewReader(produced)
 
+			var stderr bytes.Buffer
+
+			command.Stderr = &stderr
+
 			decoded, err := command.Output()
 			if err != nil {
-				t.Fatalf("official XZ decode: %v", err)
+				t.Fatalf("official XZ decode: %v; stderr: %s", err, stderr.String())
 			}
 
 			if name == "tar.xz" || name == "txz" {
@@ -85,6 +90,67 @@ func TestXZCLIContainers(t *testing.T) {
 				}
 			} else if !bytes.Equal(decoded, data) {
 				t.Fatal("decoded payload mismatch")
+			}
+		})
+	}
+}
+
+func TestXZCLIRepeatedClose(t *testing.T) {
+	cli := os.Getenv("XZ_CLI")
+	if cli == "" {
+		cli = "xz"
+	}
+
+	payload := bytes.Repeat([]byte("XZ container payload\x00\xff\n"), 1000)
+	input := filepath.Join(t.TempDir(), "input")
+
+	formats := []string{"xz", "lzma2"}
+	sizes := []int{0, 1, 23, 4097, len(payload)}
+
+	for _, name := range formats {
+		t.Run(name, func(t *testing.T) {
+			format, err := ParseFormat(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for cycle := range 20 {
+				t.Run(strconv.Itoa(cycle), func(t *testing.T) {
+					data := payload[:sizes[cycle%len(sizes)]]
+
+					err := os.WriteFile(input, data, 0o600)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					var output bytes.Buffer
+
+					options := Options{Format: format, Output: "-", Level: 3, Threads: 1 + cycle%2, Memory: 128 << 20}
+
+					err = Pack(t.Context(), []string{input}, options, &output)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					produced, verify := interop.Output(t, "archive.xz", output.Bytes())
+					if !verify {
+						return
+					}
+
+					// Deliberately omit a decoder memory limit to distinguish corrupt
+					// output from admission failures in the reference decoder.
+					command := exec.CommandContext(t.Context(), cli, "--decompress", "--stdout", "--threads=1")
+					command.Stdin = bytes.NewReader(produced)
+
+					var stderr bytes.Buffer
+
+					command.Stderr = &stderr
+
+					decoded, err := command.Output()
+					if err != nil || !bytes.Equal(decoded, data) {
+						t.Fatalf("official XZ decode: %v; decoded %d bytes, want %d; stderr: %s", err, len(decoded), len(data), stderr.String())
+					}
+				})
 			}
 		})
 	}

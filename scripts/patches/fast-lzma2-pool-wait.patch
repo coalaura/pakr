@@ -1,0 +1,48 @@
+--- a/fl2_pool.c
++++ b/fl2_pool.c
+@@ -155,9 +155,9 @@
+ 		return; 
+ 
+     /* Callers always wait for jobs to complete before adding a new set */
+-    assert(!ctx->numThreadsBusy);
+-
+     FL2_pthread_mutex_lock(&ctx->queueMutex);
++	assert(!ctx->numThreadsBusy && ctx->queueIndex >= ctx->queueEnd);
++
+     ctx->function = function;
+     ctx->opaque = opaque;
+     ctx->queueIndex = first;
+@@ -174,7 +174,7 @@
+ int FL2POOL_waitAll(void *ctxVoid, unsigned timeout)
+ {
+     FL2POOL_ctx* const ctx = (FL2POOL_ctx*)ctxVoid;
+-    if (!ctx || (!ctx->numThreadsBusy && ctx->queueIndex >= ctx->queueEnd) || ctx->shutdown) { return 0; }
++	if (!ctx) { return 0; }
+ 
+     FL2_pthread_mutex_lock(&ctx->queueMutex);
+     /* Need to test for ctx->queueIndex < ctx->queueEnd in case not all jobs have started */
+@@ -186,13 +186,21 @@
+         while ((ctx->numThreadsBusy || ctx->queueIndex < ctx->queueEnd) && !ctx->shutdown)
+             FL2_pthread_cond_wait(&ctx->busyCond, &ctx->queueMutex);
+     }
++	/* A timed wait may expire before any worker starts, or wake while other
++	 * jobs remain. Snapshot both states under the mutex. Do not restart the
++	 * timeout on wakeups: callers must regain control for cancellation. */
++	int const pending = ctx->numThreadsBusy || ctx->queueIndex < ctx->queueEnd;
+     FL2_pthread_mutex_unlock(&ctx->queueMutex);
+-    return ctx->numThreadsBusy && !ctx->shutdown;
++	return pending;
+ }
+ 
+-size_t FL2POOL_threadsBusy(void * ctx)
++size_t FL2POOL_threadsBusy(void * ctxVoid)
+ {
+-    return ((FL2POOL_ctx*)ctx)->numThreadsBusy;
++	FL2POOL_ctx* const ctx = (FL2POOL_ctx*)ctxVoid;
++	FL2_pthread_mutex_lock(&ctx->queueMutex);
++	size_t const busy = ctx->numThreadsBusy;
++	FL2_pthread_mutex_unlock(&ctx->queueMutex);
++	return busy;
+ }
+ 
+ #endif  /* FL2_SINGLETHREAD */

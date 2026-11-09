@@ -59,9 +59,13 @@ func TestXZCLI(t *testing.T) {
 			command := exec.CommandContext(t.Context(), cli, "--decompress", "--stdout", "--threads=1", "--memlimit-decompress=128MiB")
 			command.Stdin = bytes.NewReader(produced)
 
+			var stderr bytes.Buffer
+
+			command.Stderr = &stderr
+
 			actual, err := command.Output()
 			if err != nil || !bytes.Equal(actual, scenario.data) {
-				t.Fatalf("official XZ decode: %v", err)
+				t.Fatalf("official XZ decode: %v; decoded %d bytes, want %d; stderr: %s", err, len(actual), len(scenario.data), stderr.String())
 			}
 
 			if scenario.name == "streamed" || scenario.name == "incompressible-blocks" {
@@ -91,9 +95,13 @@ func TestXZCLI(t *testing.T) {
 		command := exec.CommandContext(t.Context(), cli, "--compress", "--stdout", "--threads=1", "--check=crc64", "-1")
 		command.Stdin = bytes.NewReader(mixed)
 
+		var stderr bytes.Buffer
+
+		command.Stderr = &stderr
+
 		encoded, err := command.Output()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("official XZ encode: %v; stderr: %s", err, stderr.String())
 		}
 
 		return encoded
@@ -172,9 +180,13 @@ func checkXZCLIContents(t *testing.T, cli string, encoded, data []byte) {
 	command := exec.CommandContext(t.Context(), cli, "--decompress", "--stdout", "--threads=2", "--memlimit-decompress=128MiB", "--memlimit-mt-decompress=128MiB")
 	command.Stdin = bytes.NewReader(encoded)
 
+	var stderr bytes.Buffer
+
+	command.Stderr = &stderr
+
 	actual, err := command.Output()
 	if err != nil || !bytes.Equal(actual, data) {
-		t.Fatalf("official threaded XZ decode: %v", err)
+		t.Fatalf("official threaded XZ decode: %v; decoded %d bytes, want %d; stderr: %s", err, len(actual), len(data), stderr.String())
 	}
 }
 
@@ -190,9 +202,13 @@ func checkXZCLIListing(t *testing.T, cli string, encoded []byte, streams, blocks
 
 	command := exec.CommandContext(t.Context(), cli, "--robot", "--list", "-vv", path)
 
+	var stderr bytes.Buffer
+
+	command.Stderr = &stderr
+
 	output, err := command.Output()
 	if err != nil {
-		t.Fatalf("official XZ block listing: %v", err)
+		t.Fatalf("official XZ block listing: %v; stderr: %s", err, stderr.String())
 	}
 
 	var (
