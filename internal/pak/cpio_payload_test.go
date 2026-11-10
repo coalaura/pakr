@@ -155,9 +155,12 @@ func cpioTestExtractor(t *testing.T, limits *ExtractionLimits) *extractor {
 		cancel(nil)
 	})
 
-	return &extractor{
+	extract := &extractor{
 		root:    root,
 		copying: &copier{ctx: ctx, buffer: make([]byte, 16)},
 		budget:  newExtractionBudget(ctx, limits, cancel),
 	}
+	t.Cleanup(extract.close)
+
+	return extract
 }

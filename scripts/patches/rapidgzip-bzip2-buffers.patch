@@ -1,0 +1,75 @@
+--- a/src/core/BitReader.hpp
++++ b/src/core/BitReader.hpp
+@@ -132,2 +132,9 @@
+ 
++    BitReader( const BitReader& other, size_t bufferRefillSize ) :
++        BitReader( other.m_file->clone(), bufferRefillSize )
++    {
++        // Independent small probes need no copy of the source's read-ahead.
++        seek( other.tell() );
++    }
++
+     /* File Reader Interface Implementation */
+--- a/src/indexed_bzip2/BZ2BlockFetcher.hpp
++++ b/src/indexed_bzip2/BZ2BlockFetcher.hpp
+@@ -54,2 +54,3 @@
+         m_bitReader( bitReader ),
++        m_headerReader( bitReader, 4096 ),
+         m_blockSize100k( bzip2::readBzip2Header( bitReader ) )
+@@ -64,4 +65,4 @@
+     readBlockHeader( size_t blockOffset ) const
+     {
+-        BitReader bitReader( m_bitReader );
++        auto& bitReader = m_headerReader;
+         bitReader.seekTo( blockOffset );
+@@ -88,4 +89,7 @@
+         BitReader bitReader( m_bitReader );
+         bitReader.seekTo( blockOffset );
+-        bzip2::Block block( bitReader );
++        // Worker threads own one reusable BWT workspace, released with the pool.
++        // Every used symbol is overwritten before the transform reads it.
++        thread_local std::vector<uint32_t> workspace;
++        bzip2::Block block( bitReader, std::move( workspace ) );
+ 
+@@ -130,2 +134,3 @@
+         result.calculatedCRC = block.dataCRC();
++        workspace = block.releaseWorkspace();
+ 
+@@ -141,2 +146,4 @@
+     const BitReader m_bitReader;
++    // Only the ordered consumer probes boundaries; decoding uses separate readers.
++    mutable BitReader m_headerReader;
+     uint8_t m_blockSize100k;
+--- a/src/indexed_bzip2/bzip2.hpp
++++ b/src/indexed_bzip2/bzip2.hpp
+@@ -245,2 +245,3 @@
+-    Block( BitReader& bitReader ) :
++    Block( BitReader& bitReader, std::vector<uint32_t> workspace = {} ) :
++        bwdata( std::move( workspace ) ),
+         m_bitReader( &bitReader )
+@@ -250,2 +251,8 @@
+ 
++    std::vector<uint32_t>
++    releaseWorkspace()
++    {
++        return std::move( bwdata.dbuf );
++    }
++
+     /**
+@@ -377,2 +384,8 @@
+     public:
++        explicit BurrowsWheelerTransformData( std::vector<uint32_t> workspace = {} ) :
++            dbuf( std::move( workspace ) )
++        {
++            dbuf.resize( 900000 );
++        }
++
+         /**
+@@ -416,1 +429,1 @@
+-        std::vector<uint32_t> dbuf = std::vector<uint32_t>( 900000, 0 );
++        std::vector<uint32_t> dbuf;
+--- a/src/indexed_bzip2/ParallelBZ2Reader.hpp
++++ b/src/indexed_bzip2/ParallelBZ2Reader.hpp
+@@ -225,1 +225,1 @@
+-                                BitReader nextBzip2StreamBitReader( m_bitReader );
++                                BitReader nextBzip2StreamBitReader( m_bitReader, 64 );

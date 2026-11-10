@@ -153,6 +153,8 @@ func TestExtractionDirectoryReplacement(t *testing.T) {
 			defer cancel(nil)
 
 			extract := extractor{root: root, copying: &copier{ctx: ctx}, budget: newExtractionBudget(ctx, nil, cancel)}
+			defer extract.close()
+
 			header := native.Header{Name: "entry", Kind: native.Directory, Mode: 0o777}
 
 			err = extract.entry(header, nil)
@@ -214,6 +216,7 @@ func TestExtractionAncestorReplacement(t *testing.T) {
 			defer cancel(nil)
 
 			extract := extractor{root: root, copying: &copier{ctx: ctx}, budget: newExtractionBudget(ctx, nil, cancel)}
+			defer extract.close()
 
 			err = extract.entry(native.Header{Name: "parent/child/first", Kind: native.Regular, Mode: 0o600}, bytes.NewReader(nil))
 			if err != nil {

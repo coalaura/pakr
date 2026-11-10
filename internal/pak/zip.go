@@ -22,6 +22,7 @@ const zipBufferLimit = 8 << 20
 type zipResult struct {
 	header     *zip.FileHeader
 	compressed []byte
+	stream     *zipStream
 	err        error
 }
 
@@ -31,6 +32,7 @@ type zipWorker struct {
 	output []byte
 	jobs   chan *entry
 	done   chan zipResult
+	chunks chan zipChunk
 }
 
 type zipDecoder struct {
@@ -39,11 +41,52 @@ type zipDecoder struct {
 	data       []byte
 }
 
-func (worker *zipWorker) run(copying *copier) {
+func (worker *zipWorker) run(copying *copier, level int) {
 	defer worker.codec.Close()
 
 	for item := range worker.jobs {
-		worker.done <- prepareZip(item, worker, copying)
+		result := prepareZip(item, worker, copying)
+		if result.err != nil || item.header.Size <= zipBufferLimit {
+			select {
+			case worker.done <- result:
+			case <-copying.ctx.Done():
+				return
+			}
+
+			continue
+		}
+
+		result.stream = newZipStream(copying.ctx, worker.chunks)
+		worker.chunks = result.stream.free
+
+		select {
+		case worker.done <- result:
+		case <-copying.ctx.Done():
+			return
+		}
+
+		worker.stream(result.stream, item, copying, level)
+	}
+}
+
+func (worker *zipWorker) stream(stream *zipStream, item *entry, copying *copier, level int) {
+	defer close(stream.ready)
+
+	encoder := zipStreamEncoder{stream: stream}
+	codec, err := native.NewWriter(&encoder.output, native.Deflate, level, 1)
+	encoder.codec = codec
+
+	worker.input = resize(worker.input, native.BufferSize)
+	streaming := *copying
+	streaming.buffer = worker.input
+
+	if err == nil {
+		err = streaming.file(&encoder, item)
+		err = encoder.finish(err)
+	}
+
+	if err != nil {
+		stream.send(zipChunk{err: err})
 	}
 }
 
@@ -111,18 +154,30 @@ func (decoder *zipDecoder) extract(file *zip.File, extract *extractor) error {
 }
 
 func packZip(target io.Writer, entries []entry, options Options, copying *copier) error {
+	ctx, cancel := context.WithCancel(copying.ctx)
+
+	working := *copying
+	working.ctx = ctx
+	copying = &working
+
 	archive := zip.NewWriter(target)
 
+	var compressed zipStreamWriter
+
 	archive.RegisterCompressor(zip.Deflate, func(target io.Writer) (io.WriteCloser, error) {
-		return native.NewWriter(target, native.Deflate, options.Level, 1)
+		compressed.target = target
+
+		return &compressed, nil
 	})
 
-	// Slots bound both the reorder window and reusable input/output buffers (~256 MiB).
+	// Slots bound the reorder window; streaming entries also have bounded chunk queues.
 	workers := make([]zipWorker, min(options.Threads, 16, len(entries)))
 
 	var pending sync.WaitGroup
 
 	defer func() {
+		cancel()
+
 		for index := range workers {
 			if workers[index].jobs != nil {
 				close(workers[index].jobs)
@@ -146,14 +201,21 @@ func packZip(target io.Writer, entries []entry, options Options, copying *copier
 		worker.jobs <- &entries[index]
 
 		pending.Go(func() {
-			worker.run(copying)
+			worker.run(copying, options.Level)
 		})
 	}
 
 	for index := range entries {
 		worker := &workers[index%len(workers)]
 
-		result := <-worker.done
+		var result zipResult
+
+		select {
+		case result = <-worker.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
 		if result.err != nil {
 			return result.err
 		}
@@ -163,7 +225,14 @@ func packZip(target io.Writer, entries []entry, options Options, copying *copier
 			return err
 		}
 
-		if result.compressed != nil {
+		if result.stream != nil {
+			var writer io.Writer
+
+			writer, err = archive.CreateHeader(result.header)
+			if err == nil {
+				err = result.stream.write(writer, &compressed)
+			}
+		} else if result.compressed != nil {
 			var writer io.Writer
 
 			writer, err = archive.CreateRaw(result.header)
@@ -359,7 +428,9 @@ func unpackZip(source io.ReaderAt, size int64, threads int, extract *extractor) 
 
 			decoder := zipDecoder{codec: codec}
 			copying := copier{ctx: ctx, progress: extract.copying.progress, buffer: make([]byte, native.BufferSize)}
+
 			worker := extractor{root: extract.root, copying: &copying, budget: extract.budget, directories: directories, prechecked: true}
+			defer worker.close()
 
 			for file := range jobs {
 				workerErr = decoder.extract(file, &worker)

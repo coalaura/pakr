@@ -149,6 +149,7 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	progress.Phase("unpack", 0)
 
 	extract := extractor{root: root, budget: budget, copying: &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}}
+	defer extract.close()
 
 	switch options.Format.Container {
 	case "wim":
@@ -253,6 +254,9 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	}
 
 	if options.Format.Container == "tar" {
+		// Keep read-ahead available to the footer drain, including delayed codec errors.
+		source = bufio.NewReaderSize(source, native.BufferSize)
+
 		err = unpackTar(source, extract)
 		if err == nil {
 			// Tar's end marker precedes the codec footer; drain to validate its checksum.

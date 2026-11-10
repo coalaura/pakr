@@ -2,6 +2,7 @@ package pak
 
 import (
 	"archive/tar"
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -311,7 +312,8 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 }
 
 func packTar(target io.Writer, entries []entry, copying *copier) error {
-	archive := tar.NewWriter(target)
+	buffered := bufio.NewWriterSize(target, native.BufferSize)
+	archive := tar.NewWriter(buffered)
 
 	for index := range entries {
 		item := &entries[index]
@@ -350,7 +352,12 @@ func packTar(target io.Writer, entries []entry, copying *copier) error {
 
 	copying.progress.Phase("finish", -1)
 
-	return archive.Close()
+	err := archive.Close()
+	if err != nil {
+		return err
+	}
+
+	return buffered.Flush()
 }
 
 func pack7z(filename string, entries []entry, options Options, copying *copier) error {

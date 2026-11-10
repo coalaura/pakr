@@ -1,0 +1,34 @@
+--- a/src/indexed_bzip2/BZ2BlockFetcher.hpp
++++ b/src/indexed_bzip2/BZ2BlockFetcher.hpp
+@@ -65,16 +65,25 @@
+     {
+         auto& bitReader = m_headerReader;
+         bitReader.seekTo( blockOffset );
+-        bzip2::Block block( bitReader );
++        // A boundary probe needs no Huffman tables or 3.6 MB BWT workspace.
++        // The worker validates the full header when decoding a data block.
++        const auto magic = bitReader.read<48>();
++        if ( ( magic != bzip2::MAGIC_BITS_BLOCK ) && ( magic != bzip2::MAGIC_BITS_EOS ) ) {
++            throw std::domain_error( "Invalid bzip2 block boundary" );
++        }
+ 
+         BlockHeaderData result;
+         result.encodedOffsetInBits = blockOffset;
+-        result.isEndOfStreamBlock = block.eos();
+-        result.isEndOfFile = block.eof();
+-        result.expectedCRC = block.headerCRC();
++        result.isEndOfStreamBlock = magic == bzip2::MAGIC_BITS_EOS;
++        result.expectedCRC = bitReader.read<32>();
+ 
+-        if ( block.eos() ) {
+-            result.encodedSizeInBits = block.encodedSizeInBits;
++        if ( result.isEndOfStreamBlock ) {
++            const auto padding = bitReader.tell() % 8;
++            if ( padding != 0 ) {
++                bitReader.read( uint8_t( 8 - padding ) );
++            }
++            result.encodedSizeInBits = bitReader.tell() - blockOffset;
++            result.isEndOfFile = bitReader.eof();
+         }
+ 
+         return result;

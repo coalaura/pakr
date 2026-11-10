@@ -20,6 +20,13 @@ type extractor struct {
 	directories *extractionDirectories
 	budget      *extractionBudget
 	prechecked  bool
+	ancestors   []extractionAncestor
+}
+
+type extractionAncestor struct {
+	name string
+	root *os.Root
+	info os.FileInfo
 }
 
 type extractionDirectory struct {
@@ -59,9 +66,11 @@ func (extract *extractor) entry(header native.Header, source io.Reader) error {
 		return nil
 	}
 
-	err = extract.directory(path.Dir(name), nil, false)
-	if err != nil {
-		return err
+	if header.Kind != native.Directory {
+		err = extract.directory(path.Dir(name), nil, false)
+		if err != nil {
+			return err
+		}
 	}
 
 	switch header.Kind {
@@ -135,6 +144,8 @@ func (extract *extractor) payload(header native.Header, target io.Writer, source
 }
 
 func (extract *extractor) finish() error {
+	defer extract.close()
+
 	if extract.directories == nil {
 		return nil
 	}
@@ -161,16 +172,21 @@ func (extract *extractor) directory(name string, header *native.Header, exclusiv
 
 	directories := extract.directoryState()
 	parent := extract.root
-	end := 0
+	retained := true
+
+	var (
+		end   int
+		depth int
+	)
 
 	defer func() {
-		if parent != extract.root {
+		if !retained {
 			parent.Close()
 		}
 	}()
 
-	// Walk relative to pinned parents instead of resolving every prefix from
-	// the extraction root. This keeps deep paths linear without caching handles.
+	// Recheck every ancestor's current identity. A bounded prefix of pinned
+	// handles avoids reopening unchanged directories on each sibling entry.
 	for component := range strings.SplitSeq(name, "/") {
 		end += len(component) + 1
 		prefix := name[:end-1]
@@ -194,26 +210,63 @@ func (extract *extractor) directory(name string, header *native.Header, exclusiv
 			return nil
 		}
 
-		next, err := parent.OpenRoot(component)
+		next, cached, err := extract.ancestor(parent, component, prefix, info, depth)
 		if err != nil {
 			return err
 		}
 
-		pinned, err := next.Stat(".")
-		if err != nil || !os.SameFile(info, pinned) {
-			next.Close()
-
-			return fmt.Errorf("directory changed during extraction: %s", prefix)
-		}
-
-		if parent != extract.root {
+		if !retained {
 			parent.Close()
 		}
 
 		parent = next
+		retained = cached
+		depth++
 	}
 
 	return nil
+}
+
+func (extract *extractor) ancestor(parent *os.Root, component, name string, info os.FileInfo, depth int) (*os.Root, bool, error) {
+	if depth < len(extract.ancestors) {
+		cached := &extract.ancestors[depth]
+		if cached.name == name && os.SameFile(cached.info, info) {
+			return cached.root, true, nil
+		}
+
+		for index := len(extract.ancestors) - 1; index >= depth; index-- {
+			extract.ancestors[index].root.Close()
+		}
+
+		extract.ancestors = extract.ancestors[:depth]
+	}
+
+	next, err := parent.OpenRoot(component)
+	if err != nil {
+		return nil, false, err
+	}
+
+	pinned, err := next.Stat(".")
+	if err != nil || !os.SameFile(info, pinned) {
+		next.Close()
+
+		return nil, false, fmt.Errorf("directory changed during extraction: %s", name)
+	}
+
+	retained := depth < 32
+	if retained {
+		extract.ancestors = append(extract.ancestors, extractionAncestor{name: name, root: next, info: pinned})
+	}
+
+	return next, retained, nil
+}
+
+func (extract *extractor) close() {
+	for _, ancestor := range slices.Backward(extract.ancestors) {
+		ancestor.root.Close()
+	}
+
+	extract.ancestors = nil
 }
 
 func (directories *extractionDirectories) directoryInfo(parent *os.Root, component, name string, exclusive bool) (os.FileInfo, error) {

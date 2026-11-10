@@ -339,7 +339,10 @@ func TestWIMRootAndRollback(t *testing.T) {
 	}
 
 	copying := copier{ctx: t.Context(), buffer: make([]byte, native.BufferSize)}
+
 	extract := extractor{root: root, copying: &copying}
+	defer extract.close()
+
 	stage := wimStage{directory: t.TempDir()}
 
 	err = publishWIM(items, &stage, &extract)
@@ -509,7 +512,9 @@ func TestWIMDirectorySymlinkOrder(t *testing.T) {
 	defer root.Close()
 
 	copying := copier{ctx: t.Context(), buffer: make([]byte, native.BufferSize)}
+
 	extract := extractor{root: root, copying: &copying}
+	defer extract.close()
 
 	items := []wimItem{
 		{header: native.Header{Name: "a-link", Kind: native.Symlink, Link: "z-target"}},
