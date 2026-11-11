@@ -15,18 +15,21 @@ Native source versions, URLs and checksums are recorded in `scripts/native.lock`
 | liblzma | `xz/COPYING` and `xz/COPYING.0BSD` |
 | Fast LZMA2 1.0.1 | `fast-lzma2/LICENSE` (BSD-2-Clause option selected; copyright Conor McCarthy) |
 | xxHash (included in Fast LZMA2) | `fast-lzma2/xxhash.h` (BSD-2-Clause; copyright Yann Collet) |
-| liblz4 | `lz4/lib/LICENSE` (BSD-2-Clause) |
+| liblz4 1.11.1 | `lz4/lib/LICENSE` (BSD-2-Clause) |
 | Brotli | `brotli/LICENSE` (MIT) |
 | libarchive | `libarchive/COPYING`; individual source notices also apply |
 | wimlib 1.14.5 (library only) | `wimlib/COPYING` and `wimlib/COPYING.LGPL` (LGPL-2.1-or-later option, without NTFS-3G) |
 | libdeflate | `libdeflate/COPYING` (MIT) |
 | ISA-L fork | `isal/LICENSE` (BSD-3-Clause) |
-| rapidgzip and indexed_bzip2 | `rapidgzip/LICENSE-MIT` and `rapidgzip/LICENSE-APACHE` |
+| rapidgzip 0.16.2 | `rapidgzip/LICENSE-MIT` and `rapidgzip/LICENSE-APACHE` |
+| librapidarchive (rapidgzip and indexed_bzip2 implementation) | `librapidarchive/LICENSE-MIT` and `librapidarchive/LICENSE-APACHE` |
 | NASM, build-time only | `nasm/LICENSE` (BSD-2-Clause) |
 
 Go dependency versions and checksums are recorded in `go.mod`, `go.sum` and the separate `tools/toolchain` module. These include coalaura/plain, urfave/cli/v3, golang.org/x/sys, golang.org/x/term and the build-time coalaura/builder library. Go, Zig's runtime libraries, musl on Linux and the Windows runtime import libraries also contribute to the built executable.
 
-Redistributed binaries must retain the applicable third-party copyright notices and license texts. Native source archives are unmodified except for the committed patches under `scripts/patches/`; the ISA-L dependency is explicitly pinned to the rapidgzip author's fork.
+Redistributed binaries must retain the applicable third-party copyright notices and license texts. Native source archives are unmodified except for the committed patches under `scripts/patches/`; the ISA-L dependency is explicitly pinned to the rapidgzip author's fork. The rapidgzip 0.16.2 archive omits its librapidarchive submodule: pakr separately fetches revision `59eb3317063f14a9b1b5cbc50989bba99992b7b7` and that revision's ISA-L fork `63bb128a3254ba05ec8b7b5abf19615b14a0436a`. Both original archives are included in the release source bundle. The `librapidarchive-*` patches retain bzip2 workspace reuse, lightweight header probes with reduced read-ahead, and sparse-window decoder storage off worker stacks.
+
+Additional librapidarchive patches reject a header-only truncated gzip stream and resolve a `BYTE_SIZE` macro collision with Darwin's Mach headers. Bzip2 stream-CRC verification uses the upstream implementation.
 
 `internal/pak/testdata/archives.json` contains base64-encoded ZIPX and RAR fixtures from [libarchive 3.8.11's tests](https://github.com/libarchive/libarchive/tree/v3.8.11/libarchive/test), under the libarchive license above. Keys preserve upstream filenames; decoded bytes match `libarchive/test/<name>.uu` in the source pinned by `scripts/native.lock`. RAR utility fixtures are independently generated, not produced by pakr; upstream does not record every producer version or command. Expected contents follow the upstream tests. Encrypted, multipart and malformed regression fixtures exercise rejection; security tests mutate copies without changing the originals.
 

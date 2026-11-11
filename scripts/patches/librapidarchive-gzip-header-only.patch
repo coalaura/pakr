@@ -1,0 +1,14 @@
+--- a/src/rapidgzip/GzipBlockFinder.hpp
++++ b/src/rapidgzip/GzipBlockFinder.hpp
+@@ -60,6 +60,11 @@
+             throw std::invalid_argument( "Failed to detect a valid file format." );
+         }
+ 
++        // A complete header without even one DEFLATE block is truncated, not an empty stream.
++        if ( m_fileSizeInBits && ( detectedFormat->second >= *m_fileSizeInBits ) ) {
++            throw std::invalid_argument( "Truncated stream after file header." );
++        }
++
+         m_fileType = detectedFormat->first;
+         if ( m_fileType == FileType::BGZF ) {
+             m_bgzfBlockFinder = std::make_unique<blockfinder::Bgzf>( m_file->clone() );

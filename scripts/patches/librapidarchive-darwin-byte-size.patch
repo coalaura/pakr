@@ -1,0 +1,14 @@
+--- a/src/rapidgzip/gzip/definitions.hpp
++++ b/src/rapidgzip/gzip/definitions.hpp
+@@ -21,6 +21,11 @@
+ }  // namespace gzip
+ 
+ 
++/* Darwin's Mach headers define BYTE_SIZE as a macro. Use the format constant below instead. */
++#ifdef BYTE_SIZE
++    #undef BYTE_SIZE
++#endif
++
+ /** Note that this describes bytes in the data format not on the host system, which is CHAR_BIT and might differ. */
+ constexpr auto BYTE_SIZE = 8U;
+ 

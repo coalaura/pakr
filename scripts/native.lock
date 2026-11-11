@@ -8,11 +8,13 @@ bzip2 1.0.8 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269 htt
 bzip3 1.5.5 d61c05785bccb50d4af75107556d9fc7373995f873270b729184509e9f1be6dd https://codeload.github.com/iczelia/bzip3/tar.gz/refs/tags/1.5.5
 libbsc 3.4.0 b0081d225f6e5e1bac50d16ad4a784ca48cb28b1f0f4fd90a10310725c7e6d7c https://codeload.github.com/IlyaGrebnov/libbsc/tar.gz/refs/tags/v3.4.0
 xz 5.8.4 b6b34c52e672e810d339db14e0c10b5b6f5f67a30d8d05cdac5d8cb4d82f78d5 https://codeload.github.com/tukaani-project/xz/tar.gz/refs/tags/v5.8.4
-lz4 1.11.0 247e5fa64da5f7b75ee3dd3bed484076396c9ebe8254d9ccf693eb62800c5e26 https://codeload.github.com/lz4/lz4/tar.gz/refs/tags/v1.11.0
+lz4 1.11.1 683fed08a844ad012196381e40badf80c0bbe4962959761416d41c9e67d77ec7 https://codeload.github.com/lz4/lz4/tar.gz/refs/tags/v1.11.1
 brotli 1.2.1 98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.2.1
 libarchive 3.8.11 6e9560b2e0659ff688c5efb7717a68bb06b28ef65a69addcd6c424eaf9c319b1 https://codeload.github.com/libarchive/libarchive/tar.gz/refs/tags/v3.8.11
 libdeflate 1.26 bba03fffc5538576213675ce6968fcff6ce2e67d82e4d5febea2d05f9f13cf85 https://codeload.github.com/ebiggers/libdeflate/tar.gz/refs/tags/v1.26
-# rapidgzip requires its ISA-L fork's block-boundary API; this is its pinned submodule revision.
-isal fb41a9673f23cd965d1f474450ebf80a0d660c8f f861fd68f4b36836d5cd51b9bf040addd8aff60c4bde1a2699586579bf335936 https://codeload.github.com/mxmlnkn/isa-l/tar.gz/fb41a9673f23cd965d1f474450ebf80a0d660c8f
-rapidgzip 0.14.5 8513aa3a3ddfb9c9e9acd4feebf0c2a126fce503b1d0d21d0e548ede645bd80d https://codeload.github.com/mxmlnkn/rapidgzip/tar.gz/refs/tags/rapidgzip-v0.14.5
+# librapidarchive requires its ISA-L fork's block-boundary API; this is its exact submodule revision.
+isal 63bb128a3254ba05ec8b7b5abf19615b14a0436a 91e013cedad4507f69170b0d9b0640f63b9e0884c1d1f6ae92c01ed8a0e16878 https://codeload.github.com/mxmlnkn/isa-l/tar.gz/63bb128a3254ba05ec8b7b5abf19615b14a0436a
+rapidgzip 0.16.2 04e380e8e5350a0618a65361a37c7f6849e7e89d88366b3db36cad559e0961e9 https://codeload.github.com/mxmlnkn/rapidgzip/tar.gz/refs/tags/rapidgzip-v0.16.2
+# GitHub source archives omit submodules. Fetch rapidgzip-v0.16.2's exact librapidarchive revision separately.
+librapidarchive 59eb3317063f14a9b1b5cbc50989bba99992b7b7 cbe1c4449d596b6547ae36b9c27e1c79da57c9ba87d6baa453acc3622044760d https://codeload.github.com/mxmlnkn/librapidarchive/tar.gz/59eb3317063f14a9b1b5cbc50989bba99992b7b7
 nasm 2.16.03 1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148 https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz

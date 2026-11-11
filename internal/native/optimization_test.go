@@ -174,43 +174,54 @@ func TestNativeParameters(t *testing.T) {
 }
 
 func TestLZ4Workers(t *testing.T) {
-	levels := []int{1, 3, 9}
+	threadCounts := []int{1, 4}
 	data := testData(17*BufferSize + 37)
 
-	for _, level := range levels {
-		var compressed bytes.Buffer
+	for level := 1; level <= 9; level++ {
+		for _, requestedThreads := range threadCounts {
+			t.Run(strconv.Itoa(level)+"/"+strconv.Itoa(requestedThreads), func(t *testing.T) {
+				var compressed bytes.Buffer
 
-		writer, err := NewWriter(&compressed, LZ4, level, 4)
-		if err != nil {
-			t.Fatal(err)
-		}
+				writer, err := NewWriter(&compressed, LZ4, level, requestedThreads)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-		_, err = writer.Write(data)
-		if err != nil {
-			t.Fatal(err)
-		}
+				_, err = writer.Write(data)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-		_, threads, _ := writer.parameters()
-		if threads != 4 {
-			t.Fatalf("lz4 multithreading unavailable: workers=%d", threads)
-		}
+				_, threads, _ := writer.parameters()
 
-		err = writer.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
+				expectedWorkers := requestedThreads
+				if expectedWorkers == 1 {
+					// LZ4's zero-worker mode runs synchronously on the calling thread.
+					expectedWorkers = 0
+				}
 
-		reader, err := NewReader(bytes.NewReader(compressed.Bytes()), LZ4, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+				if threads != expectedWorkers {
+					t.Fatalf("lz4 worker count: got %d, want %d", threads, expectedWorkers)
+				}
 
-		decoded, err := io.ReadAll(reader)
+				err = writer.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
 
-		reader.Close()
+				reader, err := NewReader(bytes.NewReader(compressed.Bytes()), LZ4, requestedThreads)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-		if err != nil || !bytes.Equal(decoded, data) {
-			t.Fatalf("lz4 parallel round trip: %v", err)
+				decoded, err := io.ReadAll(reader)
+
+				reader.Close()
+
+				if err != nil || !bytes.Equal(decoded, data) {
+					t.Fatalf("lz4 parallel round trip: %v", err)
+				}
+			})
 		}
 	}
 }

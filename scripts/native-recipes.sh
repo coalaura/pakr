@@ -89,12 +89,12 @@ recipe_libarchive() {
 }
 
 recipe_parallel() {
-	# rapidgzip is header-only and is compiled into this bridge.
-	source_name=rapidgzip
+	# rapidgzip and indexed_bzip2 now live in the header-only librapidarchive submodule.
+	source_name=librapidarchive
 	dependencies=(zlib-ng bzip2 libdeflate isal)
 	cmake_source="$root/scripts/parallel"
 	inputs=(scripts/parallel/CMakeLists.txt internal/native/parallel/parallel.cc internal/native/parallel.h)
-	cmake_options=(-DSOURCE="$sources/rapidgzip")
+	cmake_options=(-DSOURCE="$sources/librapidarchive")
 	archives=(libpakr_parallel.a)
 }
 

@@ -10,7 +10,9 @@ bundle="$stage/pakr-source-$version"
 mkdir -p "$bundle/.native/downloads" "$bundle/licenses" "$root/dist"
 
 # Include the actual build inputs, including local changes in developer bundles.
-git -c safe.directory="$root" -C "$root" ls-files -z --cached --others --exclude-standard | tar -C "$root" --null -T - -cf - | tar -xf - -C "$bundle"
+git -c safe.directory="$root" -C "$root" ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' file; do
+	if [[ -e "$root/$file" || -L "$root/$file" ]]; then printf '%s\0' "$file"; fi
+done | tar -C "$root" --null -T - -cf - | tar -xf - -C "$bundle"
 bash "$root/scripts/fetch.sh"
 while read -r name release checksum url; do
 	[[ -z "$name" || "$name" == \#* ]] && continue
@@ -24,6 +26,8 @@ cp "$root/.native/src/wimlib/COPYING.LGPL" "$bundle/licenses/LGPL-2.1.txt"
 cp "$root/.native/src/wimlib/COPYING" "$bundle/licenses/wimlib.txt"
 cp "$root/.native/src/fast-lzma2/LICENSE" "$bundle/licenses/fast-lzma2.txt"
 cp "$root/.native/src/fast-lzma2/xxhash.h" "$bundle/licenses/fast-lzma2-xxhash.h"
+cp "$root/.native/src/librapidarchive/LICENSE-MIT" "$bundle/licenses/librapidarchive-MIT.txt"
+cp "$root/.native/src/librapidarchive/LICENSE-APACHE" "$bundle/licenses/librapidarchive-APACHE.txt"
 printf 'BZIP3 copyright (C) 2022-2024 Kamila Szewczyk; LGPLv3 or later.\nSee THIRD_PARTY.md for license notices, relinking permission and rebuilding instructions. Native notices are in the included source archives.\n' > "$bundle/licenses/NOTICE.txt"
 printf 'wimlib 1.14.5, copyright Eric Biggers and contributors; LGPL-2.1-or-later library option, without NTFS-3G. Full copyright notices are in the included wimlib source archive.\n' >> "$bundle/licenses/NOTICE.txt"
 printf 'Fast LZMA2 1.0.1, copyright Conor McCarthy; distributed under its BSD-2-Clause option. Included xxHash copyright Yann Collet, BSD-2-Clause. See fast-lzma2.txt and fast-lzma2-xxhash.h for the notices.\n' >> "$bundle/licenses/NOTICE.txt"

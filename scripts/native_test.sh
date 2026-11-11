@@ -209,7 +209,7 @@ expect_rebuilt
 printf '// Go-only change\n' >> "$work/internal/native/codec.go"
 build
 expect_rebuilt
-printf '%s\n' '--- a/value' '+++ b/value' '@@ -1 +1 @@' '-upstream' '+patched' > "$work/scripts/patches/rapidgzip-test.patch"
+printf '%s\n' '--- a/value' '+++ b/value' '@@ -1 +1 @@' '-upstream' '+patched' > "$work/scripts/patches/librapidarchive-test.patch"
 build
 expect_rebuilt parallel
 printf '\n' >> "$work/internal/native/wim/wim.c"
@@ -218,7 +218,7 @@ expect_rebuilt wim
 printf '\n' >> "$work/internal/native/kanzi/kanzi.cc"
 build
 expect_rebuilt kanzi
-cp "$work/scripts/patches/rapidgzip-test.patch" "$work/scripts/patches/zlib-ng-test.patch"
+cp "$work/scripts/patches/librapidarchive-test.patch" "$work/scripts/patches/zlib-ng-test.patch"
 build
 expect_rebuilt zlib-ng libarchive parallel
 printf '\n' >> "$work/scripts/bzip2/CMakeLists.txt"

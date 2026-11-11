@@ -1,6 +1,6 @@
 --- a/src/rapidgzip/gzip/deflate.hpp
 +++ b/src/rapidgzip/gzip/deflate.hpp
-@@ -1783,9 +1783,39 @@
+@@ -1854,9 +1854,39 @@
 +/* One fixed-size slot per thread, never on the worker stack. Destroying the decoder
 + * after each use releases its variable-size backreference buffer. Analysis releases
 + * the slot before verification. Nested calls get independent, non-retained storage. */
@@ -31,7 +31,7 @@
 +
 +
  [[nodiscard]] inline bool
- verifySparseWindow( BitReader&                bitReader,
+ verifySparseWindow( gzip::BitReader&          bitReader,
                      const std::vector<bool>&  windowByteIsRequired,
                      const VectorView<uint8_t> expectedOutput )
  {
@@ -41,7 +41,7 @@
  
      /* Check that the created sparse window is correct by setting all sparse bytes to some arbitrary canary token.
       * If not (should not happen), show a warning and fall back to a non-sparse window. */
-@@ -1856,37 +1886,8 @@
+@@ -1927,37 +1957,8 @@
 -    /* Anonymous namespace to ensure that the 208kB deflate::Block is cleared from the stack before
 -     * allocating another such block inside verifySparseWindow! */
 +    /* Release the thread-local slot before verification; lexical scopes alone do not

@@ -13,7 +13,7 @@ target_include_directories(pakr_parallel PRIVATE
 	"${CMAKE_INSTALL_PREFIX}/include"
 	"${SOURCE}/src"
 	"${SOURCE}/src/core"
-	"${SOURCE}/src/core/filereader"
+	"${SOURCE}/src/filereader"
 	"${SOURCE}/src/huffman"
 	"${SOURCE}/src/indexed_bzip2"
 	"${SOURCE}/src/rapidgzip"

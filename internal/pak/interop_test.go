@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/coalaura/pakr/internal/interop"
@@ -24,6 +25,11 @@ type referenceArchive struct {
 	native string
 }
 
+type referenceSettings struct {
+	level   int
+	threads int
+}
+
 func TestReferenceInteroperability(t *testing.T) {
 	lzip := os.Getenv("LZIP_CLI")
 	if lzip == "" {
@@ -36,79 +42,93 @@ func TestReferenceInteroperability(t *testing.T) {
 
 	for _, codec := range codecs {
 		t.Run(codec.format, func(t *testing.T) {
-			base := t.TempDir()
-			input := filepath.Join(base, "input")
+			settings := []referenceSettings{{level: 3, threads: 2}}
 
-			err := os.WriteFile(input, data, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
+			if codec.format == "lz4" {
+				settings = make([]referenceSettings, 0, 18)
 
-			format, err := ParseFormat(codec.format)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			archive := filepath.Join(base, "archive."+codec.format)
-			options := Options{Format: format, Output: archive, Threads: 2, Level: 3}
-
-			err = Pack(context.Background(), []string{input}, options, io.Discard)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			encoded, err := os.ReadFile(archive)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			produced, verify := interop.Output(t, "archive", encoded)
-			if verify {
-				decoder := exec.CommandContext(t.Context(), codec.tool, "-d", "-c")
-				decoder.Stdin = bytes.NewReader(produced)
-
-				decoded, err := decoder.Output()
-				if err != nil {
-					t.Fatalf("reference decode: %v", err)
-				}
-
-				if !bytes.Equal(decoded, data) {
-					t.Fatal("reference decoded different content")
+				for level := 1; level <= 9; level++ {
+					settings = append(settings, referenceSettings{level: level, threads: 1}, referenceSettings{level: level, threads: 4})
 				}
 			}
 
-			encoded = interop.Reference(t, "archive", func() []byte {
-				encoder := exec.CommandContext(t.Context(), codec.tool, "-c", input)
+			for _, setting := range settings {
+				t.Run(strconv.Itoa(setting.level)+"/"+strconv.Itoa(setting.threads), func(t *testing.T) {
+					base := t.TempDir()
+					input := filepath.Join(base, "input")
 
-				result, err := encoder.Output()
-				if err != nil {
-					t.Fatalf("reference encode: %v", err)
-				}
+					err := os.WriteFile(input, data, 0o600)
+					if err != nil {
+						t.Fatal(err)
+					}
 
-				return result
-			})
+					format, err := ParseFormat(codec.format)
+					if err != nil {
+						t.Fatal(err)
+					}
 
-			archive = filepath.Join(base, "reference."+codec.format)
+					archive := filepath.Join(base, "archive."+codec.format)
+					options := Options{Format: format, Output: archive, Threads: setting.threads, Level: setting.level}
 
-			err = os.WriteFile(archive, encoded, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
+					err = Pack(context.Background(), []string{input}, options, io.Discard)
+					if err != nil {
+						t.Fatal(err)
+					}
 
-			options.Output = filepath.Join(base, "output")
+					encoded, err := os.ReadFile(archive)
+					if err != nil {
+						t.Fatal(err)
+					}
 
-			err = Unpack(context.Background(), archive, options, nil)
-			if err != nil {
-				t.Fatalf("reference archive decode: %v", err)
-			}
+					produced, verify := interop.Output(t, "archive", encoded)
+					if verify {
+						decoder := exec.CommandContext(t.Context(), codec.tool, "-d", "-c")
+						decoder.Stdin = bytes.NewReader(produced)
 
-			decoded, err := os.ReadFile(filepath.Join(options.Output, "reference"))
-			if err != nil {
-				t.Fatal(err)
-			}
+						decoded, err := decoder.Output()
+						if err != nil {
+							t.Fatalf("reference decode: %v", err)
+						}
 
-			if !bytes.Equal(decoded, data) {
-				t.Fatal("pakr decoded different content")
+						if !bytes.Equal(decoded, data) {
+							t.Fatal("reference decoded different content")
+						}
+					}
+
+					encoded = interop.Reference(t, "archive", func() []byte {
+						encoder := exec.CommandContext(t.Context(), codec.tool, "-c", input)
+
+						result, err := encoder.Output()
+						if err != nil {
+							t.Fatalf("reference encode: %v", err)
+						}
+
+						return result
+					})
+
+					archive = filepath.Join(base, "reference."+codec.format)
+
+					err = os.WriteFile(archive, encoded, 0o600)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					options.Output = filepath.Join(base, "output")
+
+					err = Unpack(context.Background(), archive, options, nil)
+					if err != nil {
+						t.Fatalf("reference archive decode: %v", err)
+					}
+
+					decoded, err := os.ReadFile(filepath.Join(options.Output, "reference"))
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					if !bytes.Equal(decoded, data) {
+						t.Fatal("pakr decoded different content")
+					}
+				})
 			}
 		})
 	}

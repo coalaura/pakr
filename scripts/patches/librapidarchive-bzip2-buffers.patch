@@ -1,6 +1,6 @@
---- a/src/core/BitReader.hpp
-+++ b/src/core/BitReader.hpp
-@@ -132,2 +132,9 @@
+--- a/src/filereader/BitReader.hpp
++++ b/src/filereader/BitReader.hpp
+@@ -123,2 +123,9 @@
  
 +    BitReader( const BitReader& other, size_t bufferRefillSize ) :
 +        BitReader( other.m_file->clone(), bufferRefillSize )
@@ -12,17 +12,21 @@
      /* File Reader Interface Implementation */
 --- a/src/indexed_bzip2/BZ2BlockFetcher.hpp
 +++ b/src/indexed_bzip2/BZ2BlockFetcher.hpp
-@@ -54,2 +54,3 @@
+@@ -55,2 +55,3 @@
          m_bitReader( bitReader ),
 +        m_headerReader( bitReader, 4096 ),
          m_blockSize100k( bzip2::readBzip2Header( bitReader ) )
-@@ -64,4 +65,4 @@
+@@ -64,7 +65,7 @@
+     [[nodiscard]] BlockHeaderData
      readBlockHeader( size_t blockOffset ) const
      {
 -        BitReader bitReader( m_bitReader );
 +        auto& bitReader = m_headerReader;
          bitReader.seekTo( blockOffset );
-@@ -88,4 +89,7 @@
+         const bzip2::Block block( bitReader );
+ 
+@@ -88,7 +89,10 @@
+     {
          BitReader bitReader( m_bitReader );
          bitReader.seekTo( blockOffset );
 -        bzip2::Block block( bitReader );
@@ -31,7 +35,9 @@
 +        thread_local std::vector<uint32_t> workspace;
 +        bzip2::Block block( bitReader, std::move( workspace ) );
  
-@@ -130,2 +134,3 @@
+         BlockData result;
+         result.encodedOffsetInBits = blockOffset;
+@@ -131,2 +135,3 @@
          result.calculatedCRC = block.dataCRC();
 +        workspace = block.releaseWorkspace();
  
@@ -42,12 +48,12 @@
      uint8_t m_blockSize100k;
 --- a/src/indexed_bzip2/bzip2.hpp
 +++ b/src/indexed_bzip2/bzip2.hpp
-@@ -245,2 +245,3 @@
+@@ -248,2 +248,3 @@
 -    Block( BitReader& bitReader ) :
 +    Block( BitReader& bitReader, std::vector<uint32_t> workspace = {} ) :
 +        bwdata( std::move( workspace ) ),
          m_bitReader( &bitReader )
-@@ -250,2 +251,8 @@
+@@ -253,2 +254,8 @@
  
 +    std::vector<uint32_t>
 +    releaseWorkspace()
@@ -56,20 +62,20 @@
 +    }
 +
      /**
-@@ -377,2 +384,8 @@
+@@ -380,2 +387,8 @@
      public:
 +        explicit BurrowsWheelerTransformData( std::vector<uint32_t> workspace = {} ) :
 +            dbuf( std::move( workspace ) )
 +        {
-+            dbuf.resize( 900000 );
++            dbuf.resize( MAX_BLOCK_SIZE );
 +        }
 +
          /**
-@@ -416,1 +429,1 @@
--        std::vector<uint32_t> dbuf = std::vector<uint32_t>( 900000, 0 );
+@@ -419,1 +432,1 @@
+-        std::vector<uint32_t> dbuf = std::vector<uint32_t>( MAX_BLOCK_SIZE, 0 );
 +        std::vector<uint32_t> dbuf;
 --- a/src/indexed_bzip2/ParallelBZ2Reader.hpp
 +++ b/src/indexed_bzip2/ParallelBZ2Reader.hpp
-@@ -225,1 +225,1 @@
+@@ -238,1 +238,1 @@
 -                                BitReader nextBzip2StreamBitReader( m_bitReader );
 +                                BitReader nextBzip2StreamBitReader( m_bitReader, 64 );

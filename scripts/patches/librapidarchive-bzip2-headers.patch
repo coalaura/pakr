@@ -1,10 +1,10 @@
 --- a/src/indexed_bzip2/BZ2BlockFetcher.hpp
 +++ b/src/indexed_bzip2/BZ2BlockFetcher.hpp
-@@ -65,16 +65,25 @@
+@@ -67,16 +67,25 @@
      {
          auto& bitReader = m_headerReader;
          bitReader.seekTo( blockOffset );
--        bzip2::Block block( bitReader );
+-        const bzip2::Block block( bitReader );
 +        // A boundary probe needs no Huffman tables or 3.6 MB BWT workspace.
 +        // The worker validates the full header when decoding a data block.
 +        const auto magic = bitReader.read<48>();
