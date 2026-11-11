@@ -223,7 +223,19 @@ func TestExtractionAncestorReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// Windows cannot rename a directory with an open descendant. Move
+			// the pinned child aside without closing either cached handle.
+			err = root.Rename("parent/child", "child")
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			err = root.Rename("parent", "original")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = root.Rename("child", "original/child")
 			if err != nil {
 				t.Fatal(err)
 			}

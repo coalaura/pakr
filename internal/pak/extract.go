@@ -66,7 +66,7 @@ func (extract *extractor) entry(header native.Header, source io.Reader) error {
 		return nil
 	}
 
-	if header.Kind != native.Directory {
+	if header.Kind != native.Directory && header.Kind != native.Regular {
 		err = extract.directory(path.Dir(name), nil, false)
 		if err != nil {
 			return err
@@ -105,7 +105,20 @@ func (extract *extractor) entry(header native.Header, source io.Reader) error {
 }
 
 func (extract *extractor) file(name string, header native.Header, source io.Reader) error {
-	file, err := extract.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	parent, retained, err := extract.walkDirectory(path.Dir(name), nil, false, true)
+	if err != nil {
+		return err
+	}
+
+	if !retained {
+		defer parent.Close()
+	}
+
+	// Use the verified parent for both creation and cleanup, even if its path
+	// is replaced while the payload is being read.
+	leaf := path.Base(name)
+
+	file, err := parent.OpenFile(leaf, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -118,7 +131,7 @@ func (extract *extractor) file(name string, header native.Header, source io.Read
 
 	err = closeWithError(file, err)
 	if err != nil {
-		return errors.Join(err, extract.root.Remove(name))
+		return errors.Join(err, parent.Remove(leaf))
 	}
 
 	return nil
@@ -166,8 +179,15 @@ func (extract *extractor) finish() error {
 }
 
 func (extract *extractor) directory(name string, header *native.Header, exclusive bool) error {
+	_, _, err := extract.walkDirectory(name, header, exclusive, false)
+	return err
+}
+
+// When pin is true, the caller owns the returned handle unless it is retained
+// by the extractor. Transient handles are closed here on every error path.
+func (extract *extractor) walkDirectory(name string, header *native.Header, exclusive, pin bool) (*os.Root, bool, error) {
 	if name == "." {
-		return nil
+		return extract.root, true, nil
 	}
 
 	directories := extract.directoryState()
@@ -193,7 +213,7 @@ func (extract *extractor) directory(name string, header *native.Header, exclusiv
 
 		info, err := directories.directoryInfo(parent, component, prefix, exclusive && prefix == name)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
 
 		if prefix == name {
@@ -207,16 +227,24 @@ func (extract *extractor) directory(name string, header *native.Header, exclusiv
 				directories.mutex.Unlock()
 			}
 
-			return nil
+			if !pin {
+				return nil, false, nil
+			}
 		}
 
 		next, cached, err := extract.ancestor(parent, component, prefix, info, depth)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
 
 		if !retained {
 			parent.Close()
+		}
+
+		if prefix == name {
+			retained = true
+
+			return next, cached, nil
 		}
 
 		parent = next
@@ -224,7 +252,7 @@ func (extract *extractor) directory(name string, header *native.Header, exclusiv
 		depth++
 	}
 
-	return nil
+	return nil, false, nil
 }
 
 func (extract *extractor) ancestor(parent *os.Root, component, name string, info os.FileInfo, depth int) (*os.Root, bool, error) {
