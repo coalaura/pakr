@@ -106,7 +106,9 @@ pakr_codec *pakr_codec_new(int format, int encode, int level, int threads, int e
 		if (encode) {
 			result = LZ4F_isError(LZ4F_createCompressionContext(&codec->lz4_encoder, LZ4F_VERSION));
 			codec->lz4_preferences.frameInfo.contentChecksumFlag = LZ4F_contentChecksumEnabled;
-			codec->lz4_preferences.frameInfo.blockSizeID = LZ4F_max256KB;
+			/* Match the 1 MiB worker jobs without copying linked-block history. */
+			codec->lz4_preferences.frameInfo.blockSizeID = LZ4F_max1MB;
+			codec->lz4_preferences.frameInfo.blockMode = LZ4F_blockIndependent;
 			codec->lz4_preferences.compressionLevel = level;
 			/* Each worker can retain two jobs, with both input and output buffers. */
 			int limit = (256U << 20) / ((4U << 20) + LZ4_sizeofStateHC());

@@ -30,15 +30,32 @@ type copier struct {
 func (copying *copier) copy(target io.Writer, source io.Reader) (int64, error) {
 	var total int64
 
+	stream, streaming := source.(*streamReader)
+
 	for {
 		err := copying.ctx.Err()
 		if err != nil {
 			return total, err
 		}
 
-		count, readErr := source.Read(copying.buffer)
+		var (
+			data    []byte
+			readErr error
+		)
+
+		if streaming {
+			// The chunk stays owned by this consumer until the next read.
+			data, readErr = stream.next()
+		} else {
+			var count int
+
+			count, readErr = source.Read(copying.buffer)
+			data = copying.buffer[:count]
+		}
+
+		count := len(data)
 		if count > 0 {
-			written, err := target.Write(copying.buffer[:count])
+			written, err := target.Write(data)
 			total += int64(written)
 
 			copying.progress.Add(written)

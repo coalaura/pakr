@@ -253,6 +253,27 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 		source = codec
 	}
 
+	_, sequential := codec.(*native.Reader)
+	if sequential && file != nil && size >= native.BufferSize {
+		bufferSize := 0
+
+		switch options.Format.Codec {
+		case native.LZ4, native.Brotli:
+			bufferSize = 4 << 20
+		case native.Zstd:
+			bufferSize = native.BufferSize
+		}
+
+		if bufferSize != 0 {
+			// Only regular files: stopping must not wait on an uninterruptible stdin read.
+			// Join the decoder before its deferred Close frees the native state.
+			stream := newStreamReader(extract.copying.ctx, source, bufferSize)
+			defer stream.Close()
+
+			source = stream
+		}
+	}
+
 	if options.Format.Container == "tar" {
 		// Keep read-ahead available to the footer drain, including delayed codec errors.
 		source = bufio.NewReaderSize(source, native.BufferSize)
