@@ -1,7 +1,6 @@
 package pak
 
 import (
-	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -275,10 +274,22 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	}
 
 	if options.Format.Container == "tar" {
+		threads := options.Threads
+
+		if codec != nil {
+			// Parallel decoders already consume the worker budget. A sequential
+			// decoder leaves the remaining workers available for file extraction.
+			threads = 1
+
+			if sequential && options.Format.Codec != native.XZ {
+				threads = max(1, options.Threads-1)
+			}
+		}
+
 		// Keep read-ahead available to the footer drain, including delayed codec errors.
 		source = bufio.NewReaderSize(source, native.BufferSize)
 
-		err = unpackTar(source, extract)
+		err = unpackTar(source, threads, extract)
 		if err == nil {
 			// Tar's end marker precedes the codec footer; drain to validate its checksum.
 			extract.copying.progress.Phase("finish", -1)
@@ -299,41 +310,6 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	}
 
 	return extract.entry(header, source)
-}
-
-func unpackTar(source io.Reader, extract *extractor) error {
-	archive := tar.NewReader(source)
-
-	for {
-		header, err := archive.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
-
-		item := native.Header{Name: header.Name, Size: header.Size, Mode: uint32(header.Mode), Modified: header.ModTime, Link: header.Linkname}
-
-		switch header.Typeflag {
-		case tar.TypeReg:
-			item.Kind = native.Regular
-		case tar.TypeDir:
-			item.Kind = native.Directory
-		case tar.TypeSymlink:
-			item.Kind = native.Symlink
-		case tar.TypeLink:
-			item.Kind = native.Hardlink
-		default:
-			return fmt.Errorf("unsupported tar entry type: %s", header.Name)
-		}
-
-		err = extract.entry(item, archive)
-		if err != nil {
-			return err
-		}
-	}
 }
 
 func unpackArchive(input, format string, entries int64, extract *extractor) (result error) {
