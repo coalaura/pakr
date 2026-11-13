@@ -1,0 +1,25 @@
+--- a/src/core/BlockFetcher.hpp
++++ b/src/core/BlockFetcher.hpp
+@@ -210,2 +210,9 @@
+     }
+ 
++    void
++    setMaxCachedBlocks( size_t count )
++    {
++        m_maxCachedBlocks = std::max( size_t( 1 ), count );
++        m_cache.shrinkTo( m_maxCachedBlocks );
++    }
++
+@@ -393,1 +401,2 @@
++        m_cache.shrinkTo( m_maxCachedBlocks - 1 );
+         m_cache.insert( blockOffset, std::move( blockData ) );
+@@ -730,1 +739,2 @@
++    size_t m_maxCachedBlocks{ std::numeric_limits<size_t>::max() };
+     BlockCache m_cache;
+--- a/src/rapidgzip/ParallelGzipReader.hpp
++++ b/src/rapidgzip/ParallelGzipReader.hpp
+@@ -1373,1 +1373,4 @@
+         m_chunkFetcher->setChunkConfiguration( m_chunkConfiguration );
++        // Forward-only readers need boundary lookups, not the general seek cache.
++        // Leave the speculative prefetch queue unchanged to keep workers busy.
++        m_chunkFetcher->setMaxCachedBlocks( m_keepIndex ? std::numeric_limits<size_t>::max() : 2 );

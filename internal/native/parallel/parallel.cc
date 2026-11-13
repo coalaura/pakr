@@ -40,6 +40,8 @@ extern "C" void *pakr_parallel_open(const char *path, int format, int threads, c
 #endif
 		if (format == 1) {
 			auto reader = std::make_unique<rapidgzip::ParallelGzipReader<>>(std::move(source), threads);
+			// Extraction is forward-only; release seek windows and old decoded chunks.
+			reader->setKeepIndex(false);
 			reader->setCRC32Enabled(true);
 			return static_cast<rapidgzip::FileReader *>(reader.release());
 		}

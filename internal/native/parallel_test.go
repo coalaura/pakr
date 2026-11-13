@@ -65,3 +65,42 @@ func TestParallelGzipRepeated(t *testing.T) {
 		})
 	}
 }
+
+func TestParallelGzipCacheEviction(t *testing.T) {
+	// A single member exceeds the retained cache and crosses chunks in small reads.
+	data := testData(64 << 20)
+	expected := sha256.Sum256(data)
+	encoded := encodeParallelIntegrity(t, Gzip, data)
+	filename := filepath.Join(t.TempDir(), "eviction.gz")
+	buffer := make([]byte, 4093)
+	corruption := []bool{false, true}
+
+	for _, corrupt := range corruption {
+		if corrupt {
+			encoded[len(encoded)-8] ^= 1
+		}
+
+		err := os.WriteFile(filename, encoded, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		reader, err := OpenParallel(filename, Gzip, 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		digest := sha256.New()
+		count, readErr := io.CopyBuffer(digest, reader, buffer)
+
+		reader.Close()
+
+		if corrupt {
+			if readErr == nil {
+				t.Fatal("checksum mismatch accepted after cache eviction")
+			}
+		} else if readErr != nil || count != int64(len(data)) || !bytes.Equal(digest.Sum(nil), expected[:]) {
+			t.Fatalf("cache eviction decode: bytes=%d, error=%v", count, readErr)
+		}
+	}
+}

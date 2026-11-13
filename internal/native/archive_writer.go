@@ -78,6 +78,11 @@ func NewArchiveWriter(ctx context.Context, target io.Writer, format string) (*Ar
 
 	err = archive.check(status)
 	if err == nil {
+		// Batch native callbacks and file writes without padding the final block.
+		err = archive.check(C.archive_write_set_bytes_per_block(archive.archive, BufferSize))
+	}
+
+	if err == nil {
 		// Do not pad raw streams or AR archives to libarchive's default tape block.
 		err = archive.check(C.archive_write_set_bytes_in_last_block(archive.archive, 1))
 	}
