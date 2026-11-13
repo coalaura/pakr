@@ -361,7 +361,7 @@ func packTar(target io.Writer, entries []entry, copying *copier) error {
 }
 
 func pack7z(filename string, entries []entry, options Options, copying *copier) error {
-	archive, err := native.OpenArchive(filename, true, options.Level, options.Threads)
+	archive, err := native.Open7ZipWriter(copying.ctx, filename, options.Level, options.Threads, uint64(options.Memory))
 	if err != nil {
 		return err
 	}

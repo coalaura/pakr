@@ -156,21 +156,21 @@ func Unpack(ctx context.Context, input string, options Options, stdin io.Reader)
 	case "zip":
 		err = unpackZip(file, size, options.Threads, &extract)
 	case "7z":
-		err = unpackArchive(input, "7z", -1, &extract)
+		err = unpackArchive(input, "7z", -1, options, &extract)
 	case "rar":
 		var info rarInfo
 
 		info, err = rarFormat(ctx, file, size)
 		if err == nil {
-			err = unpackArchive(input, info.format, info.entries, &extract)
+			err = unpackArchive(input, info.format, info.entries, options, &extract)
 		}
 	case "iso":
 		err = validateISO(file, size)
 		if err == nil {
-			err = unpackArchive(input, options.Format.Name, -1, &extract)
+			err = unpackArchive(input, options.Format.Name, -1, options, &extract)
 		}
 	case "cab", "cpio", "ar", "lha", "rpm":
-		err = unpackArchive(input, options.Format.Name, -1, &extract)
+		err = unpackArchive(input, options.Format.Name, -1, options, &extract)
 	case "raw":
 		err = unpackLegacyStream(input, inputName, options.Format.Name, &extract)
 	default:
@@ -312,8 +312,18 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	return extract.entry(header, source)
 }
 
-func unpackArchive(input, format string, entries int64, extract *extractor) (result error) {
-	archive, err := native.OpenArchiveReader(input, format)
+func unpackArchive(input, format string, entries int64, options Options, extract *extractor) (result error) {
+	var (
+		archive *native.Archive
+		err     error
+	)
+
+	if format == "7z" {
+		archive, err = native.Open7ZipReader(extract.copying.ctx, input, options.Threads, uint64(options.Memory))
+	} else {
+		archive, err = native.OpenArchiveReader(input, format)
+	}
+
 	if err != nil {
 		return err
 	}

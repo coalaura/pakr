@@ -5,6 +5,8 @@ package native
 #include <archive_entry.h>
 #include <locale.h>
 #include <stdlib.h>
+#include "sevenzip.h"
+#include "sevenzip_decode.h"
 int pakr_archive_read_tail(struct archive *archive);
 typedef __LA_MODE_T pakr_mode_t;
 #ifdef _WIN32
@@ -69,14 +71,17 @@ type Header struct {
 }
 
 type Archive struct {
-	archive *C.struct_archive
-	writing bool
-	filter  int
-	format  string
-	ctx     context.Context
-	target  io.Writer
-	handle  cgo.Handle
-	err     error
+	archive  *C.struct_archive
+	writing  bool
+	filter   int
+	format   string
+	ctx      context.Context
+	target   io.Writer
+	handle   cgo.Handle
+	err      error
+	encoder  *C.pakr_7z_encoder
+	decoder  *C.pakr_7z_decoder
+	sevenzip *sevenzipReader
 }
 
 // libarchive converts entry names through the C locale. Initialize it before
@@ -308,6 +313,22 @@ func (archive *Archive) Close() error {
 	}
 
 	archive.archive = nil
+
+	if archive.encoder != nil {
+		C.pakr_7z_encoder_free(archive.encoder)
+		archive.encoder = nil
+	}
+
+	if archive.decoder != nil {
+		C.pakr_7z_decoder_free(archive.decoder)
+		archive.decoder = nil
+	}
+
+	if archive.sevenzip != nil {
+		err = errors.Join(err, archive.sevenzip.file.Close())
+		archive.sevenzip = nil
+	}
+
 	if archive.handle != 0 {
 		archive.handle.Delete()
 		archive.handle = 0
@@ -363,15 +384,15 @@ func (archive *Archive) cpioFilters(format string) C.int {
 }
 
 func OpenArchive(path string, writing bool, level, threads int) (*Archive, error) {
-	return openArchive(path, "7z", writing, level, threads)
+	return openArchive(context.Background(), path, "7z", writing, level, threads, 1<<30)
 }
 
 // OpenArchiveReader enables only the selected container and its applicable filters.
 func OpenArchiveReader(path, format string) (*Archive, error) {
-	return openArchive(path, format, false, 3, 1)
+	return openArchive(context.Background(), path, format, false, 3, 1, 1<<30)
 }
 
-func openArchive(path, format string, writing bool, level, threads int) (*Archive, error) {
+func openArchive(ctx context.Context, path, format string, writing bool, level, threads int, memory uint64) (*Archive, error) {
 	if level < 1 || level > 9 || threads < 1 {
 		return nil, errors.New("invalid archive level or thread count")
 	}
@@ -380,7 +401,7 @@ func openArchive(path, format string, writing bool, level, threads int) (*Archiv
 		return nil, errors.New("a UTF-8 C locale is required for libarchive archives")
 	}
 
-	archive := &Archive{writing: writing}
+	archive := &Archive{writing: writing, ctx: ctx}
 
 	if writing {
 		archive.archive = C.archive_write_new()
@@ -406,7 +427,7 @@ func openArchive(path, format string, writing bool, level, threads int) (*Archiv
 	} else {
 		switch format {
 		case "7z":
-			status = C.archive_read_support_format_7zip(archive.archive)
+			status = archive.enable7zipDecoder(path, threads, memory)
 		case "zip":
 			status = C.archive_read_support_format_zip_seekable(archive.archive)
 		case "rar4":
@@ -480,6 +501,22 @@ func openArchive(path, format string, writing bool, level, threads int) (*Archiv
 	}
 
 	err := archive.check(status)
+	if err == nil && writing {
+		archive.handle = cgo.NewHandle(archive)
+		archive.encoder = C.pakr_7z_encoder_new(C.int(level), C.int(threads), C.uint64_t(memory), C.uintptr_t(archive.handle))
+
+		if archive.encoder == nil {
+			err = errors.New("allocate 7z encoder")
+		} else {
+			message := C.GoString(C.pakr_7z_encoder_error(unsafe.Pointer(archive.encoder)))
+			if message != "" {
+				err = errors.New(message)
+			} else {
+				C.pakr_archive_write_7zip_encoder(archive.archive, unsafe.Pointer(archive.encoder), (*[0]byte)(C.pakr_7z_encoder_start), (*[0]byte)(C.pakr_7z_encoder_step), (*[0]byte)(C.pakr_7z_encoder_error))
+			}
+		}
+	}
+
 	if err == nil {
 		name := C.CString(path)
 		write := C.int(0)

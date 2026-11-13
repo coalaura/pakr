@@ -1,0 +1,87 @@
+diff --git a/libarchive/archive_write_set_format_7zip.c b/libarchive/archive_write_set_format_7zip.c
+--- a/libarchive/archive_write_set_format_7zip.c
++++ b/libarchive/archive_write_set_format_7zip.c
+@@ -227,6 +227,11 @@ struct _7zip {
+ 	int			 opt_zstd_compression_level; // This requires a different default value.
+ 
+ 	int			 opt_threads;
++	void *pakr_encoder;
++	int (*pakr_start)(void *, unsigned char *);
++	int (*pakr_step)(void *, const void *, size_t *, void *, size_t *, int);
++	const char *(*pakr_error)(void *);
++
+ 
+ 	struct la_zstream	 stream;
+ 	struct coder		 coder;
+@@ -2144,10 +2149,71 @@ compression_init_encoder_lzma1(struct archive *a,
+ 		    LZMA_FILTER_LZMA1);
+ }
+ 
++/* The codec remains caller-owned until after archive_write_free. */
++void
++pakr_archive_write_7zip_encoder(struct archive *a, void *encoder,
++    int (*start)(void *, unsigned char *),
++    int (*step)(void *, const void *, size_t *, void *, size_t *, int),
++    const char *(*error)(void *))
++{
++	struct _7zip *zip = ((struct archive_write *)a)->format_data;
++	zip->pakr_encoder = encoder;
++	zip->pakr_start = start;
++	zip->pakr_step = step;
++	zip->pakr_error = error;
++}
++
++static int
++compression_code_pakr(struct archive *a, struct la_zstream *stream,
++    enum la_zaction action)
++{
++	struct _7zip *zip = ((struct archive_write *)a)->format_data;
++	size_t consumed = stream->avail_in;
++	size_t produced = stream->avail_out;
++	int result = zip->pakr_step(zip->pakr_encoder, stream->next_in, &consumed,
++	    stream->next_out, &produced, action == ARCHIVE_Z_FINISH);
++	if (result < 0) {
++		archive_set_error(a, ARCHIVE_ERRNO_MISC, "%s", zip->pakr_error(zip->pakr_encoder));
++		return ARCHIVE_FATAL;
++	}
++	if (consumed) stream->next_in += consumed;
++	stream->avail_in -= consumed;
++	stream->total_in += consumed;
++	stream->next_out += produced;
++	stream->avail_out -= produced;
++	stream->total_out += produced;
++	return result ? ARCHIVE_EOF : ARCHIVE_OK;
++}
++
++static int
++compression_end_pakr(struct archive *a, struct la_zstream *stream)
++{
++	(void)a;
++	stream->valid = 0;
++	return ARCHIVE_OK;
++}
++
+ static int
+ compression_init_encoder_lzma2(struct archive *a,
+     struct la_zstream *lastrm, int level)
+ {
++	struct _7zip *zip = ((struct archive_write *)a)->format_data;
++	if (zip->pakr_encoder) {
++		if (lastrm->valid) compression_end(a, lastrm);
++		lastrm->props = malloc(1);
++		if (!lastrm->props) return ARCHIVE_FATAL;
++		if (zip->pakr_start(zip->pakr_encoder, lastrm->props) < 0) {
++			free(lastrm->props);
++			lastrm->props = NULL;
++			archive_set_error(a, ARCHIVE_ERRNO_MISC, "%s", zip->pakr_error(zip->pakr_encoder));
++			return ARCHIVE_FATAL;
++		}
++		lastrm->prop_size = 1;
++		lastrm->valid = 1;
++		lastrm->code = compression_code_pakr;
++		lastrm->end = compression_end_pakr;
++		return ARCHIVE_OK;
++	}
+ 	return compression_init_encoder_lzma(a, lastrm, level,
+ 		    LZMA_FILTER_LZMA2);
+ }

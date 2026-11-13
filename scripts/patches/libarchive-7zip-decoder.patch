@@ -1,0 +1,91 @@
+--- a/libarchive/archive_read_support_format_7zip.c
++++ b/libarchive/archive_read_support_format_7zip.c
+@@ -259,2 +259,8 @@
+ struct _7zip {
++	void *pakr_decoder;
++	int pakr_active;
++	int (*pakr_start)(void *, int64_t, uint64_t, uint64_t, unsigned char);
++	int (*pakr_step)(void *, const void *, size_t *, void *, size_t *);
++	void (*pakr_stop)(void *);
++	const char *(*pakr_error)(void *);
+ 	/* Structural information about the archive. */
+@@ -482,5 +488,5 @@
+ int
+-archive_read_support_format_7zip(struct archive *_a)
++pakr_archive_read_support_7zip_decoder(struct archive *_a, void *opaque, int (*start)(void *, int64_t, uint64_t, uint64_t, unsigned char), int (*step)(void *, const void *, size_t *, void *, size_t *), void (*stop)(void *), const char *(*error)(void *))
+ {
+ 	struct archive_read *a = (struct archive_read *)_a;
+ 	struct _7zip *zip;
+@@ -497,3 +503,8 @@
+ 
++	zip->pakr_decoder = opaque;
++	zip->pakr_start = start;
++	zip->pakr_step = step;
++	zip->pakr_stop = stop;
++	zip->pakr_error = error;
+ 	/*
+ 	 * Until enough data has been read, we cannot tell about
+@@ -519,5 +530,11 @@
+ 	return (r);
+ }
+ 
++int
++archive_read_support_format_7zip(struct archive *a)
++{
++	return pakr_archive_read_support_7zip_decoder(a, NULL, NULL, NULL, NULL, NULL);
++}
++
+ static int
+ archive_read_support_format_7zip_capabilities(struct archive_read *a)
+@@ -1357,2 +1374,7 @@
++	if (zip->pakr_active) {
++		zip->pakr_stop(zip->pakr_decoder);
++		zip->pakr_active = 0;
++	}
++
+ 	zip->codec = coder1->codec;
+ 	zip->codec2 = -1;
+@@ -1740,2 +1762,11 @@
++	if (zip->pakr_active) {
++		r = zip->pakr_step(zip->pakr_decoder, b, used, buff, outbytes);
++		if (r < 0) {
++			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC, "%s", zip->pakr_error(zip->pakr_decoder));
++			return ARCHIVE_FATAL;
++		}
++		return r ? ARCHIVE_EOF : ARCHIVE_OK;
++	}
++
+ 	t_avail_in = o_avail_in = *used;
+ 	t_avail_out = o_avail_out = *outbytes;
+@@ -2125,3 +2156,8 @@
+ 	int r = ARCHIVE_OK;
+ 
++	if (zip->pakr_active) {
++		zip->pakr_stop(zip->pakr_decoder);
++		zip->pakr_active = 0;
++	}
++
+ #if !defined(HAVE_ZLIB_H) &&\
+@@ -4244,5 +4280,22 @@
+ 	r = init_decompression(a, zip, coder1, coder2);
+ 	if (r != ARCHIVE_OK)
+ 		return (ARCHIVE_FATAL);
++#ifdef HAVE_LZMA_H
++	if (!zip->header_is_being_read && zip->pakr_start && folder->numCoders == 1 && folder->numPackedStreams == 1 && coder1->codec == _7Z_LZMA2 && coder1->propertiesSize == 1) {
++		int64_t offset;
++		if (!archive_ckd_add_i64(&offset, zip->seek_base, zip->si.pi.positions[folder->packIndex])) {
++			r = zip->pakr_start(zip->pakr_decoder, offset, zip->si.pi.sizes[folder->packIndex], zip->folder_outbytes_remaining, coder1->properties[0]);
++			if (r < 0) {
++				archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC, "%s", zip->pakr_error(zip->pakr_decoder));
++				return ARCHIVE_FATAL;
++			}
++			if (r > 0) {
++				lzma_end(&zip->lzstream);
++				zip->lzstream_valid = 0;
++				zip->pakr_active = 1;
++			}
++		}
++	}
++#endif
+ 	return (ARCHIVE_OK);
+ }
