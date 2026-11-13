@@ -1,0 +1,7 @@
+--- a/lzma2_dec.c
++++ b/lzma2_dec.c
+@@ -34,3 +34,3 @@
+-#if defined __x86_64__s || defined _M_X64
++#if defined __x86_64__ || defined _M_X64
+ 
+ #define USE_CMOV
