@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 typedef struct pakr_7z_decoder pakr_7z_decoder;
+uint64_t pakr_7z_decoder_memory(unsigned char property);
 pakr_7z_decoder *pakr_7z_decoder_new(uintptr_t handle);
 void pakr_7z_decoder_free(pakr_7z_decoder *decoder);
 int pakr_7z_decoder_start(void *opaque, int64_t offset, uint64_t packed, uint64_t unpacked, unsigned char property);

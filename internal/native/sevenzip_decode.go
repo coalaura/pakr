@@ -65,25 +65,37 @@ func pakr7zWorkers(handle C.uintptr_t, offset C.int64_t, packed, unpacked C.uint
 
 	dictionary := uint64(2|property&1) << (property/2 + 11)
 	segments, largest := sevenzipSegments(archive.ctx, reader.file, int64(offset), uint64(packed), uint64(unpacked))
-	workers := min(reader.threads, segments, 8)
+	decoderMemory := uint64(C.pakr_7z_decoder_memory(property))
+	workers, capacity := sevenzipWorkers(reader.threads, reader.memory, segments, largest, dictionary, decoderMemory)
+	*limit = C.uint64_t(capacity)
+
+	return C.uint(workers)
+}
+
+func sevenzipWorkers(threads int, memory uint64, segments int, largest, dictionary, decoderMemory uint64) (int, uint64) {
+	if decoderMemory == math.MaxUint64 {
+		return 0, 0
+	}
+
+	workers := min(threads, segments, 8)
 
 	for workers >= 2 {
-		// The FL2 cap covers compressed input and decoded segments, but not
-		// stacks, decoder state or its possible single-thread fallback dictionary.
-		reserve := uint64(16+8*workers)<<20 + dictionary
-		if reader.memory > reserve {
-			capacity := min(reader.memory-reserve, 128<<20)
-			if capacity >= uint64(workers)*largest+8<<20 {
-				*limit = C.uint64_t(capacity)
+		// The FL2 cap covers queued input and output. Reserve liblzma state and
+		// dictionaries per worker, stacks, overhead and the fallback dictionary.
+		reserve := uint64(16+8*workers)<<20 + dictionary + uint64(workers)*decoderMemory
+		if memory > reserve {
+			capacity := min(memory-reserve, 128<<20)
+			minimum := max(uint64(workers)*largest+8<<20, (dictionary+dictionary/6)*2)
 
-				return C.uint(workers)
+			if capacity >= minimum {
+				return workers, capacity
 			}
 		}
 
 		workers--
 	}
 
-	return 0
+	return 0, 0
 }
 
 // The scan is an acceleration hint, not a second archive parser. It skips chunk
@@ -105,6 +117,7 @@ func sevenzipSegments(ctx context.Context, source io.ReaderAt, offset int64, pac
 	)
 
 	segments := 0
+	needsProperties := true
 
 	for chunks := 0; position < packed && chunks < 1<<20; chunks++ {
 		if ctx.Err() != nil {
@@ -133,6 +146,7 @@ func sevenzipSegments(ctx context.Context, source io.ReaderAt, offset int64, pac
 			segmentInput = 0
 			segmentOutput = 0
 			segments++
+			needsProperties = true
 		} else if segments == 0 {
 			return 0, 0
 		}
@@ -147,6 +161,13 @@ func sevenzipSegments(ctx context.Context, source io.ReaderAt, offset int64, pac
 		input := output
 
 		if control >= 0x80 {
+			// A dictionary reset alone need not reset LZMA properties. Such a
+			// segment cannot start a fresh decoder until properties are supplied.
+			if needsProperties && control < 0xc0 {
+				return 0, 0
+			}
+
+			needsProperties = false
 			headerSize = 5
 
 			if control >= 0xc0 {

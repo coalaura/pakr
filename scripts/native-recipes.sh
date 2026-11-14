@@ -36,7 +36,8 @@ recipe_xz() {
 
 recipe_fast_lzma2() {
 	cmake_source="$root/scripts/fast-lzma2"
-	inputs=(scripts/fast-lzma2/CMakeLists.txt)
+	inputs=(scripts/fast-lzma2/CMakeLists.txt scripts/fast-lzma2/lzma2_decode.h)
+	dependencies=(xz)
 	cmake_options=(-DSOURCE="$sources/fast-lzma2")
 	archives=(libfast-lzma2.a)
 }

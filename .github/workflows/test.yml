@@ -53,6 +53,9 @@ jobs:
               bash scripts/native_test.sh
               export JOBS=$(bash scripts/native-jobs.sh)
               bash scripts/native.sh linux amd64
+              cmake -S scripts/fast-lzma2 -B .native/build/linux-amd64/fast-lzma2 -DBUILD_TESTING=ON
+              cmake --build .native/build/linux-amd64/fast-lzma2 --parallel "$JOBS"
+              ctest --test-dir .native/build/linux-amd64/fast-lzma2 --output-on-failure
               cmake -S .native/src/bzip3 -B .native/build/bzip3-cli \
                 -DCMAKE_TOOLCHAIN_FILE="$PWD/.native/build/linux-amd64/toolchain/toolchain.cmake" \
                 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
