@@ -130,6 +130,8 @@ func TestSevenZipCancelledClose(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("close after cancellation: %v", err)
 	}
+
+	assertSevenZipReleased(t, writer, filename)
 }
 
 func TestSevenZipResetRoundTrip(t *testing.T) {

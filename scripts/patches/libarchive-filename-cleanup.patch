@@ -1,0 +1,29 @@
+diff --git a/libarchive/archive_write_open_filename.c b/libarchive/archive_write_open_filename.c
+--- a/libarchive/archive_write_open_filename.c
++++ b/libarchive/archive_write_open_filename.c
+@@ -253,8 +253,10 @@ file_close(struct archive *a, void *client_data)
+ 	if (mine == NULL)
+ 		return (ARCHIVE_FATAL);
+ 
+-	if (mine->fd >= 0)
++	if (mine->fd >= 0) {
+ 		close(mine->fd);
++		mine->fd = -1;
++	}
+ 
+ 	return (ARCHIVE_OK);
+ }
+@@ -264,11 +266,11 @@ file_free(struct archive *a, void *client_data)
+ {
+ 	struct write_file_data	*mine = (struct write_file_data *)client_data;
+ 
+-	(void)a; /* UNUSED */
+-
+ 	if (mine == NULL)
+ 		return (ARCHIVE_OK);
+ 
++	/* Fatal writers skip the close callback, but still own the descriptor. */
++	file_close(a, mine);
+ 	archive_mstring_clean(&mine->filename);
+ 	free(mine);
+ 	return (ARCHIVE_OK);

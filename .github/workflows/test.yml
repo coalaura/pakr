@@ -232,14 +232,13 @@ jobs:
           hdiutil create -size 4g -type SPARSE -fs APFS -fsargs "-e" -volname pakr-tests "$RUNNER_TEMP/pakr-tests.sparseimage"
           hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/pakr-tests" "$RUNNER_TEMP/pakr-tests.sparseimage"
           mkdir "$RUNNER_TEMP/pakr-tests/tmp"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP/pakr-tests/tmp" >> "$GITHUB_ENV"
 
       - name: Check macOS parallel gzip
         if: matrix.os == 'darwin'
         timeout-minutes: 3
         run: |
           chmod +x dist/tests/internal/native/package.test
-          dist/tests/internal/native/package.test -test.v -test.run '^TestParallel' -test.count=1 -test.timeout=2m
+          TMPDIR="$RUNNER_TEMP/pakr-tests/tmp" dist/tests/internal/native/package.test -test.v -test.run '^TestParallel' -test.count=1 -test.timeout=2m
 
       - name: Run all test packages
         shell: bash
@@ -248,6 +247,9 @@ jobs:
           PAKR_INTEROP_REFERENCES: ${{ github.workspace }}/dist/references
           PAKR_INTEROP_OUTPUTS: ${{ github.workspace }}/dist/produced
         run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            export TMPDIR="$RUNNER_TEMP/pakr-tests/tmp"
+          fi
           binaries=()
           while IFS= read -r -d '' binary; do
             binaries+=("$binary")
@@ -270,8 +272,9 @@ jobs:
           if-no-files-found: error
 
       - name: Detach macOS temporary volume
-        if: always() && matrix.os == 'darwin' && steps.test-volume.outcome == 'success'
-        run: hdiutil detach "$RUNNER_TEMP/pakr-tests"
+        if: always() && matrix.os == 'darwin' && steps.test-volume.outcome != 'skipped'
+        timeout-minutes: 2
+        run: bash scripts/detach-test-volume.sh
 
   verify:
     name: Independently verify ${{ matrix.os }} output

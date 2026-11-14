@@ -381,7 +381,7 @@ func pack7z(filename string, entries []entry, options Options, copying *copier) 
 		}
 
 		if err != nil {
-			return err
+			return archive.Abort(err)
 		}
 
 		copying.progress.File()

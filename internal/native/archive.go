@@ -546,6 +546,10 @@ func openArchive(ctx context.Context, path, format string, writing bool, level, 
 	}
 
 	if err != nil {
+		if writing {
+			return nil, archive.Abort(err)
+		}
+
 		archive.Close()
 
 		return nil, err
