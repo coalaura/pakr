@@ -75,7 +75,7 @@ func (source streamTestGate) Read([]byte) (int, error) {
 
 func TestStreamReaderDelivery(t *testing.T) {
 	data := make([]byte, 65539)
-	
+
 	random := rand.NewChaCha8([32]byte{1})
 	_, _ = random.Read(data)
 
@@ -208,8 +208,8 @@ func TestStreamFrames(t *testing.T) {
 
 	random := rand.NewChaCha8([32]byte{2})
 	_, _ = random.Read(data)
-	
-	names := []string{"lz4", "zst", "br", "tar.lz4", "tar.zst", "tar.br"}
+
+	names := []string{"lz4", "zst", "br", "tar.lz4", "tar.zst", "tar.br", "tar.gz", "tar.xz"}
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -332,7 +332,7 @@ func unpackStreamTest(t *testing.T, format Format, encoded, expected []byte, rej
 
 	output := filepath.Join(base, "output")
 	options := Options{Format: format, Output: output, Threads: 4}
-	
+
 	err = Unpack(t.Context(), input, options, nil)
 
 	if reject {

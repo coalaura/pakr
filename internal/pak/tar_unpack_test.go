@@ -312,6 +312,15 @@ func checkTarWorkerEntries(t *testing.T, output string, entries []tarWorkerEntry
 		entry := &entries[index]
 		filename := filepath.Join(output, entry.header.Name)
 
+		if entry.header.Typeflag == tar.TypeSymlink {
+			target, err := os.Readlink(filename)
+			if err != nil || filepath.ToSlash(target) != entry.header.Linkname {
+				t.Fatalf("symlink target changed: %q, %v", target, err)
+			}
+
+			continue
+		}
+
 		info, err := os.Stat(filename)
 		if err != nil {
 			t.Fatal(err)

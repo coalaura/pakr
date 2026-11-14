@@ -203,6 +203,12 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 		err   error
 	)
 
+	decoderThreads := options.Threads
+
+	if file != nil && options.Format.Container == "tar" && options.Format.Codec == native.XZ {
+		decoderThreads = native.XZDecoderThreads(file, size, decoderThreads)
+	}
+
 	switch options.Format.Codec {
 	case native.Kanzi:
 		var stream *native.KanziStream
@@ -220,7 +226,10 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	case native.Bzip3:
 		codec, err = native.NewBzip3Reader(extract.copying.ctx, source, options.Threads, options.Memory)
 	case native.Gzip, native.Bzip2:
-		if file != nil && size >= 1<<20 && options.Threads > 1 {
+		// TAR benefits more from overlapping one gzip decoder with file workers
+		// than from parallel deflate decoding and serialized filesystem work.
+		parallel := options.Format.Container != "tar" || options.Format.Codec != native.Gzip
+		if parallel && file != nil && size >= 1<<20 && options.Threads > 1 {
 			codec, err = native.OpenParallel(file.Name(), options.Format.Codec, min(options.Threads, 16))
 		} else {
 			codec, err = native.NewReader(source, options.Format.Codec, 1)
@@ -240,7 +249,7 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 			codec, err = native.NewReader(source, native.Zstd, options.Threads)
 		}
 	default:
-		codec, err = native.NewReader(source, options.Format.Codec, options.Threads)
+		codec, err = native.NewReader(source, options.Format.Codec, decoderThreads)
 	}
 
 	if err != nil {
@@ -257,6 +266,10 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 		bufferSize := 0
 
 		switch options.Format.Codec {
+		case native.Gzip:
+			if options.Threads > 1 && options.Format.Container == "tar" {
+				bufferSize = native.BufferSize
+			}
 		case native.LZ4, native.Brotli:
 			bufferSize = 4 << 20
 		case native.Zstd:
@@ -283,6 +296,14 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 
 			if sequential && options.Format.Codec != native.XZ {
 				threads = max(1, options.Threads-1)
+			}
+
+			if options.Format.Codec == native.XZ {
+				threads = max(1, min(8, options.Threads-decoderThreads))
+			}
+
+			if options.Format.Codec == native.Gzip {
+				threads = min(threads, 8)
 			}
 		}
 
