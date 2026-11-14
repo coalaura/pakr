@@ -226,10 +226,15 @@ func unpackStream(source io.Reader, file *os.File, size int64, input string, opt
 	case native.Bzip3:
 		codec, err = native.NewBzip3Reader(extract.copying.ctx, source, options.Threads, options.Memory)
 	case native.Gzip, native.Bzip2:
-		// TAR benefits more from overlapping one gzip decoder with file workers
-		// than from parallel deflate decoding and serialized filesystem work.
-		parallel := options.Format.Container != "tar" || options.Format.Codec != native.Gzip
-		if parallel && file != nil && size >= 1<<20 && options.Threads > 1 {
+		parallel := file != nil && size >= 1<<20 && options.Threads > 1
+		if parallel && options.Format.Container == "tar" && options.Format.Codec == native.Gzip {
+			parallel, err = tarGzipParallel(extract.copying.ctx, file, size)
+			if err != nil {
+				return err
+			}
+		}
+
+		if parallel {
 			codec, err = native.OpenParallel(file.Name(), options.Format.Codec, min(options.Threads, 16))
 		} else {
 			codec, err = native.NewReader(source, options.Format.Codec, 1)
