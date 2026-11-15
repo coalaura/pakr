@@ -314,10 +314,21 @@ func prepareZip(item *entry, worker *zipWorker, copying *copier) zipResult {
 			return zipResult{err: err}
 		}
 
+		info, err := file.Stat()
+		if err != nil {
+			return zipResult{err: closeWithError(file, err)}
+		}
+
+		if !info.Mode().IsRegular() || info.Size() != item.header.Size {
+			err = fmt.Errorf("input changed while packing: %s", item.path)
+
+			return zipResult{err: closeWithError(file, err)}
+		}
+
 		// One spare byte detects growth without ReadAll's repeated buffer expansion.
 		worker.input = resize(worker.input, worker.bufferSize+1)
 		worker.input = worker.input[:int(item.header.Size)+1]
-		
+
 		data = worker.input
 
 		count, readErr := io.ReadFull(file, data)

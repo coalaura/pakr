@@ -163,7 +163,7 @@ The charts compare pakr with native tools on mixed files and a source tree, usin
 
 ### Memory
 
-`--memory` applies to BSC, BZIP3, Kanzi, Lzip, WIM and ESD for both packing and unpacking, and to XZ and LZMA-Alone packing. Other codecs use fixed budgets.
+`--memory` applies to BSC, BZIP3, Kanzi, Lzip, WIM and ESD for both packing and unpacking, and to 7z, XZ and LZMA-Alone packing. It also controls worker admission for accelerated 7z unpacking, but does not limit its fallback decoder. Other paths do not use this setting.
 
 The default `auto` budget uses one quarter of the detected available memory, capped at 8 GiB. Set an explicit budget with a value such as `--memory 2GiB`. Depending on the codec, pakr reduces workers or rejects settings that cannot fit; it does not silently lower compression effort. These are allocation budgets, not whole-process memory limits.
 

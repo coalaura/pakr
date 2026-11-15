@@ -9,10 +9,65 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/coalaura/pakr/internal/native"
 )
+
+func TestZipBufferedInputChanges(t *testing.T) {
+	changes := []string{"grow", "shrink", "device"}
+
+	for _, change := range changes {
+		t.Run(change, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "input")
+			data := []byte("original")
+
+			if change == "device" {
+				data = nil
+			}
+
+			err := os.WriteFile(filename, data, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			entries, _, err := collect(t.Context(), []string{filename}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			switch change {
+			case "grow":
+				err = os.WriteFile(filename, append(data, '!'), 0o600)
+			case "shrink":
+				err = os.WriteFile(filename, data[:len(data)-1], 0o600)
+			case "device":
+				// Model an empty collected file replaced by a device that also returns EOF.
+				entries[0].path = os.DevNull
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			codec, err := native.NewDeflater(3)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer codec.Close()
+
+			worker := zipWorker{codec: codec, bufferSize: len(data)}
+			copying := copier{ctx: t.Context()}
+
+			result := prepareZip(&entries[0], &worker, &copying)
+			if result.err == nil || !strings.Contains(result.err.Error(), "input changed while packing") {
+				t.Fatalf("changed input accepted or wrong error: %v", result.err)
+			}
+		})
+	}
+}
 
 func TestZipMixedBufferBoundaries(t *testing.T) {
 	base := t.TempDir()
