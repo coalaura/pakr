@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/bits"
 	"os"
 	"path"
 	"runtime"
@@ -27,12 +28,13 @@ type zipResult struct {
 }
 
 type zipWorker struct {
-	codec  *native.Deflater
-	input  []byte
-	output []byte
-	jobs   chan *entry
-	done   chan zipResult
-	chunks chan zipChunk
+	bufferSize int
+	codec      *native.Deflater
+	input      []byte
+	output     []byte
+	jobs       chan *entry
+	done       chan zipResult
+	chunks     chan zipChunk
 }
 
 type zipDecoder struct {
@@ -110,8 +112,8 @@ func (decoder *zipDecoder) extract(file *zip.File, extract *extractor) error {
 			return err
 		}
 
-		decoder.compressed = resize(decoder.compressed, int(file.CompressedSize64))
-		decoder.data = resize(decoder.data, int(file.UncompressedSize64))
+		decoder.compressed = resizeZipBuffer(decoder.compressed, int(file.CompressedSize64))
+		decoder.data = resizeZipBuffer(decoder.data, int(file.UncompressedSize64))
 
 		_, err = io.ReadFull(raw, decoder.compressed)
 		if err == nil {
@@ -189,6 +191,15 @@ func packZip(target io.Writer, entries []entry, options Options, copying *copier
 
 	for index := range workers {
 		worker := &workers[index]
+
+		// Worker assignment is fixed. Reserve once for its largest buffered entry
+		// instead of replacing live buffers as slightly larger entries arrive.
+		for next := index; next < len(entries); next += len(workers) {
+			size := entries[next].header.Size
+			if size <= zipBufferLimit {
+				worker.bufferSize = max(worker.bufferSize, int(size))
+			}
+		}
 
 		codec, err := native.NewDeflater(options.Level)
 		if err != nil {
@@ -304,7 +315,9 @@ func prepareZip(item *entry, worker *zipWorker, copying *copier) zipResult {
 		}
 
 		// One spare byte detects growth without ReadAll's repeated buffer expansion.
-		worker.input = resize(worker.input, int(item.header.Size)+1)
+		worker.input = resize(worker.input, worker.bufferSize+1)
+		worker.input = worker.input[:int(item.header.Size)+1]
+		
 		data = worker.input
 
 		count, readErr := io.ReadFull(file, data)
@@ -324,6 +337,10 @@ func prepareZip(item *entry, worker *zipWorker, copying *copier) zipResult {
 		if int64(len(data)) != item.header.Size {
 			return zipResult{err: fmt.Errorf("input changed while packing: %s", item.path)}
 		}
+	}
+
+	if worker.output == nil {
+		worker.output = make([]byte, 0, worker.codec.Bound(worker.bufferSize))
 	}
 
 	compressed, err := worker.codec.Compress(worker.output, data)
@@ -556,6 +573,16 @@ func validateZipPaths(files []*zip.File) error {
 func resize(buffer []byte, size int) []byte {
 	if cap(buffer) < size {
 		return make([]byte, size)
+	}
+
+	return buffer[:size]
+}
+
+func resizeZipBuffer(buffer []byte, size int) []byte {
+	if cap(buffer) < size {
+		// Size classes avoid replacing large reusable buffers for small increases.
+		capacity := 1 << bits.Len(uint(size-1))
+		buffer = make([]byte, size, capacity)
 	}
 
 	return buffer[:size]

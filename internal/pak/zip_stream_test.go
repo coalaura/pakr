@@ -23,6 +23,8 @@ type zipInterruptWriter struct {
 	err    error
 }
 
+type zipShortWriter struct{}
+
 func (writer zipInterruptWriter) Write(data []byte) (int, error) {
 	if writer.cancel != nil {
 		writer.cancel()
@@ -33,6 +35,10 @@ func (writer zipInterruptWriter) Write(data []byte) (int, error) {
 	}
 
 	return len(data), nil
+}
+
+func (zipShortWriter) Write(data []byte) (int, error) {
+	return 0, nil
 }
 
 func TestZipStreamingWorkers(t *testing.T) {
@@ -202,6 +208,56 @@ func TestZipStreamingReuse(t *testing.T) {
 		if readErr != nil || !bytes.Equal(actual, data) {
 			t.Fatalf("recycled streaming payload changed: %v", readErr)
 		}
+	}
+}
+
+func TestZipStreamingQueueCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	stream := newZipStream(ctx, nil)
+	encoder := zipStreamEncoder{stream: stream}
+
+	codec, err := native.NewWriter(&encoder.output, native.Deflate, 3, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoder.codec = codec
+	data := bytes.Repeat([]byte{'a'}, native.BufferSize)
+
+	for range zipStreamChunks {
+		_, err = encoder.Write(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, writeErr := encoder.Write(data)
+		done <- encoder.finish(writeErr)
+	}()
+
+	cancel()
+
+	select {
+	case err = <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("queue wait lost cancellation: %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("producer did not release codec after cancellation")
+	}
+}
+
+func TestZipStreamingShortWrite(t *testing.T) {
+	writer := zipStreamWriter{target: zipShortWriter{}, data: []byte{1}}
+
+	_, err := writer.Write([]byte{1})
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("short write accepted: %v", err)
 	}
 }
 

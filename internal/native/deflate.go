@@ -21,7 +21,7 @@ type Inflater struct {
 }
 
 func (codec *Deflater) Compress(output, data []byte) ([]byte, error) {
-	bound := int(C.libdeflate_deflate_compress_bound(codec.codec, C.size_t(len(data))))
+	bound := codec.Bound(len(data))
 	if cap(output) < bound {
 		output = make([]byte, bound)
 	} else {
@@ -34,6 +34,10 @@ func (codec *Deflater) Compress(output, data []byte) ([]byte, error) {
 	}
 
 	return output[:int(count)], nil
+}
+
+func (codec *Deflater) Bound(size int) int {
+	return int(C.libdeflate_deflate_compress_bound(codec.codec, C.size_t(size)))
 }
 
 func (codec *Deflater) Close() {
