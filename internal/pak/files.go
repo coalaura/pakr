@@ -1,6 +1,7 @@
 package pak
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -22,9 +23,10 @@ type entry struct {
 }
 
 type copier struct {
-	ctx      context.Context
-	progress *Progress
-	buffer   []byte
+	ctx          context.Context
+	progress     *Progress
+	buffer       []byte
+	outputBuffer *bufio.Writer
 }
 
 func (copying *copier) copy(target io.Writer, source io.Reader) (int64, error) {
@@ -47,10 +49,25 @@ func (copying *copier) copy(target io.Writer, source io.Reader) (int64, error) {
 			// The chunk stays owned by this consumer until the next read.
 			data, readErr = stream.next()
 		} else {
+			buffer := copying.buffer
+
+			if copying.outputBuffer != nil {
+				if copying.outputBuffer.Available() == 0 {
+					err := copying.outputBuffer.Flush()
+					if err != nil {
+						return total, err
+					}
+				}
+
+				// TAR forwards file data unchanged, so read into its unused output space.
+				// The following Write commits these bytes before that space is reused.
+				buffer = copying.outputBuffer.AvailableBuffer()[:copying.outputBuffer.Available()]
+			}
+
 			var count int
 
-			count, readErr = source.Read(copying.buffer)
-			data = copying.buffer[:count]
+			count, readErr = source.Read(buffer)
+			data = buffer[:count]
 		}
 
 		count := len(data)
@@ -80,7 +97,7 @@ func (copying *copier) copy(target io.Writer, source io.Reader) (int64, error) {
 }
 
 func (copying *copier) file(target io.Writer, item *entry) error {
-	file, err := os.Open(item.path)
+	file, err := os.OpenFile(item.path, inputOpenFlags, 0)
 	if err != nil {
 		return err
 	}

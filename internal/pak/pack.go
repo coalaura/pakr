@@ -103,7 +103,11 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 
 	progress.Phase("pack", total)
 
-	copying := &copier{ctx: ctx, progress: progress, buffer: make([]byte, native.BufferSize)}
+	copying := &copier{ctx: ctx, progress: progress}
+
+	if options.Format.Container != "tar" || options.Format.Codec == native.BSC {
+		copying.buffer = make([]byte, native.BufferSize)
+	}
 
 	var (
 		temporary *os.File
@@ -314,6 +318,8 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 func packTar(target io.Writer, entries []entry, copying *copier) error {
 	buffered := bufio.NewWriterSize(target, native.BufferSize)
 	archive := tar.NewWriter(buffered)
+	bufferedCopy := *copying
+	bufferedCopy.outputBuffer = buffered
 
 	for index := range entries {
 		item := &entries[index]
@@ -340,7 +346,7 @@ func packTar(target io.Writer, entries []entry, copying *copier) error {
 		}
 
 		if err == nil && item.header.Kind == native.Regular {
-			err = copying.file(archive, item)
+			err = bufferedCopy.file(archive, item)
 		}
 
 		if err != nil {

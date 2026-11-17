@@ -1,13 +1,17 @@
 package pak
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/coalaura/pakr/internal/native"
 )
@@ -108,5 +112,85 @@ func TestTarPackingOutputFailures(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestTarPackingBufferBoundaries(t *testing.T) {
+	directory := t.TempDir()
+	sizes := []int{0, 1, 511, 512, 513, native.BufferSize - 512, native.BufferSize - 1, native.BufferSize, native.BufferSize + 1, 3*native.BufferSize + 513}
+	entries := make([]entry, 0, len(sizes)+2)
+	modified := time.Unix(1700000000, 123456789)
+	content := archiveStreamTestData(4 * native.BufferSize)
+
+	var expected bytes.Buffer
+
+	reference := tar.NewWriter(&expected)
+
+	for index, size := range sizes {
+		name := strconv.Itoa(index)
+
+		if index == len(sizes)-1 {
+			name = strings.Repeat("deep/", 40) + name
+		}
+
+		filename := filepath.Join(directory, strconv.Itoa(index))
+		data := content[:size]
+
+		err := os.WriteFile(filename, data, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		entries = append(entries, entry{path: filename, header: native.Header{Name: name, Size: int64(size), Mode: 0o640, Modified: modified}})
+		header := tar.Header{Name: name, Size: int64(size), Mode: 0o640, ModTime: modified, Typeflag: tar.TypeReg}
+
+		err = reference.WriteHeader(&header)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = reference.Write(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	metadata := []tar.Header{
+		{Name: "directory", Mode: 0o750, ModTime: modified, Typeflag: tar.TypeDir},
+		{Name: "link", Mode: 0o777, ModTime: modified, Typeflag: tar.TypeSymlink, Linkname: entries[len(entries)-1].header.Name},
+	}
+
+	for index := range metadata {
+		header := &metadata[index]
+		kind := native.Directory
+
+		if header.Typeflag == tar.TypeSymlink {
+			kind = native.Symlink
+		}
+
+		entries = append(entries, entry{header: native.Header{Name: header.Name, Mode: uint32(header.Mode), Modified: modified, Kind: kind, Link: header.Linkname}})
+
+		err := reference.WriteHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err := reference.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var actual bytes.Buffer
+
+	copying := copier{ctx: t.Context()}
+
+	err = packTar(&actual, entries, &copying)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(actual.Bytes(), expected.Bytes()) {
+		t.Fatal("buffered TAR differs from archive/tar output")
 	}
 }
