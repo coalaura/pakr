@@ -105,6 +105,10 @@ func Pack(ctx context.Context, inputs []string, options Options, stdout io.Write
 
 	copying := &copier{ctx: ctx, progress: progress}
 
+	if options.Format.Name == "tar" && output != "-" && total >= native.BufferSize {
+		copying.overlap = options.Memory == 0 || options.Memory >= 2*native.BufferSize
+	}
+
 	if options.Format.Container != "tar" || options.Format.Codec == native.BSC {
 		copying.buffer = make([]byte, native.BufferSize)
 	}
@@ -315,8 +319,21 @@ func packStream(target io.Writer, entries []entry, options Options, copying *cop
 	return err
 }
 
-func packTar(target io.Writer, entries []entry, copying *copier) error {
-	buffered := bufio.NewWriterSize(target, native.BufferSize)
+func packTar(target io.Writer, entries []entry, copying *copier) (result error) {
+	var buffered tarBuffer
+
+	if copying.overlap {
+		pipeline := newTarPipeline(target)
+
+		defer func() {
+			result = closeWithError(pipeline, result)
+		}()
+
+		buffered = pipeline
+	} else {
+		buffered = bufio.NewWriterSize(target, native.BufferSize)
+	}
+
 	archive := tar.NewWriter(buffered)
 	bufferedCopy := *copying
 	bufferedCopy.outputBuffer = buffered

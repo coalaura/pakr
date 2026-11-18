@@ -1,7 +1,6 @@
 package pak
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -26,7 +25,8 @@ type copier struct {
 	ctx          context.Context
 	progress     *Progress
 	buffer       []byte
-	outputBuffer *bufio.Writer
+	outputBuffer tarBuffer
+	overlap      bool
 }
 
 func (copying *copier) copy(target io.Writer, source io.Reader) (int64, error) {
