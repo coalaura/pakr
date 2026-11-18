@@ -105,6 +105,30 @@ func TestTarPipelineStopsOnCancelOrMutation(t *testing.T) {
 	}
 }
 
+func TestTarEmptyFileGrewBeforeOpen(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "empty")
+
+	err := os.WriteFile(filename, nil, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _, err := collect(t.Context(), []string{filename}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(filename, []byte("new contents"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = packTar(io.Discard, entries, &copier{ctx: t.Context()})
+	if err == nil || !strings.Contains(err.Error(), "input changed while packing") {
+		t.Fatalf("expected a size mismatch, got %v", err)
+	}
+}
+
 func TestTarBufferedFlushFailure(t *testing.T) {
 	failure := errors.New("flush failed")
 	copying := copier{ctx: t.Context(), buffer: make([]byte, native.BufferSize)}

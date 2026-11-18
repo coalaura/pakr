@@ -113,6 +113,10 @@ func (copying *copier) file(target io.Writer, item *entry) error {
 		return fmt.Errorf("input changed while packing: %s", item.path)
 	}
 
+	if item.header.Size == 0 && copying.outputBuffer != nil {
+		return copying.ctx.Err()
+	}
+
 	count, err := copying.copy(target, file)
 	if err != nil {
 		return err

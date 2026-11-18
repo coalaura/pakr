@@ -117,6 +117,8 @@ Entries include directories and links; data sizes count regular file contents. T
 
 ### Compressed tar and aliases
 
+Regular files that report a size of zero are archived as empty without reading their contents.
+
 Combine tar with a compression format to bundle files and directories:
 
 | Format | Short aliases |
